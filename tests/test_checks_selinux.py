@@ -2,13 +2,23 @@ from __future__ import annotations
 
 import pytest
 
-from rhcsa_sim.checks.selinux import PathHasSelinuxType, SelinuxMode
+from rhcsa_sim.checks.selinux import (
+    PathHasSelinuxType,
+    SelinuxBooleanIs,
+    SelinuxMode,
+    SelinuxPortType,
+)
 from rhcsa_sim.models import Check
+from rhcsa_sim.runner import CommandResult
 from rhcsa_sim.testing import FakeCommandRunner, make_result
 
 SESTATUS = ("sestatus",)
 STAT = ("stat", "-c", "%C", "--", "/srv/web")
 RULE = ("matchpathcon", "-n", "--", "/srv/web")
+GETSEBOOL = ("getsebool", "--", "httpd_can_network_connect")
+SEMANAGE_BOOL = ("semanage", "boolean", "-l")
+SEMANAGE_PORT = ("semanage", "port", "-l")
+SEMANAGE_ROOT_ERR = "ValueError: SELinux policy is not managed or store cannot be accessed.\n"
 
 
 def sestatus_out(status: str = "enabled", current: str | None = "enforcing",
@@ -237,3 +247,297 @@ def test_path_invalid_path(path: str) -> None:
 def test_path_invalid_type(selinux_type: str) -> None:
     with pytest.raises(ValueError):
         PathHasSelinuxType(FakeCommandRunner({}), "/srv/web", selinux_type)
+
+
+# --- SelinuxBooleanIs ---
+
+BOOL_HEADER = "SELinux boolean                State  Default Description\n\n"
+
+
+def bool_line(name: str, current: str, default: str) -> str:
+    return f"{name:<30} ({current:<4},  {default:<4})  Allow httpd to can network connect\n"
+
+
+def bool_runner(runtime: str | None, persistent: str | None = None, *, sebool_rc: int = 0,
+                sebool_err: str = "", semanage_rc: int = 0,
+                semanage_out: str | None = None) -> FakeCommandRunner:  # fmt: skip
+    """Fake de getsebool y semanage boolean -l; persistent None omite semanage."""
+    out = "" if runtime is None else f"httpd_can_network_connect --> {runtime}\n"
+    responses: dict[tuple[str, ...], CommandResult] = {
+        GETSEBOOL: make_result(GETSEBOOL, returncode=sebool_rc, stdout=out, stderr=sebool_err)
+    }
+    if persistent is not None or semanage_out is not None:
+        listing = semanage_out
+        if listing is None:
+            listing = (
+                BOOL_HEADER
+                + bool_line("allow_ftpd_anon_write", "off", "off")
+                + bool_line("httpd_can_network_connect", "on", persistent or "off")
+            )
+        err = SEMANAGE_ROOT_ERR if semanage_rc == 1 else ""
+        responses[SEMANAGE_BOOL] = make_result(
+            SEMANAGE_BOOL, returncode=semanage_rc, stdout=listing, stderr=err
+        )
+    return FakeCommandRunner(responses)
+
+
+def bool_check(runner: FakeCommandRunner, enabled: bool = True) -> SelinuxBooleanIs:
+    return SelinuxBooleanIs(runner, "httpd_can_network_connect", enabled)
+
+
+def test_boolean_describe_and_default() -> None:
+    runner = FakeCommandRunner({})
+    assert SelinuxBooleanIs(runner, "httpd_can_network_connect").enabled is True
+    assert bool_check(runner).describe() == (
+        "SELinux boolean httpd_can_network_connect is on (runtime and persistent)"
+    )
+    assert bool_check(runner, False).describe() == (
+        "SELinux boolean httpd_can_network_connect is off (runtime and persistent)"
+    )
+
+
+def test_boolean_satisfies_protocol() -> None:
+    check: Check = bool_check(FakeCommandRunner({}))
+    assert check.describe()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_boolean_both_is_ok(enabled: bool) -> None:
+    state = "on" if enabled else "off"
+    runner = bool_runner(state, state)
+    result = bool_check(runner, enabled).run()
+    assert result.passed and result.detail == f"boolean is {state} (runtime and persistent)"
+    assert runner.calls == [GETSEBOOL, SEMANAGE_BOOL]
+
+
+def test_boolean_runtime_only_is_ko() -> None:
+    result = bool_check(bool_runner("on", "off")).run()
+    assert not result.passed
+    assert result.detail == "set only at runtime (use setsebool -P)"
+
+
+def test_boolean_persistent_only_is_ko() -> None:
+    result = bool_check(bool_runner("off", "on")).run()
+    assert not result.passed
+    assert result.detail == (
+        "set persistently but not active (run setsebool without -P or reboot)"
+    )
+
+
+def test_boolean_neither_is_ko() -> None:
+    result = bool_check(bool_runner("off", "off")).run()
+    assert not result.passed and result.detail == "boolean is off, expected on"
+    result = bool_check(bool_runner("on", "on"), False).run()
+    assert not result.passed and result.detail == "boolean is on, expected off"
+
+
+def test_boolean_off_expected_runtime_only() -> None:
+    result = bool_check(bool_runner("off", "on"), False).run()
+    assert not result.passed
+    assert result.detail == "set only at runtime (use setsebool -P)"
+
+
+def test_boolean_unknown_is_ko_and_stops() -> None:
+    runner = bool_runner(
+        None, sebool_rc=255, sebool_err="Error getting active value for httpd_can_network_connect\n"
+    )
+    result = bool_check(runner).run()
+    assert not result.passed
+    assert result.detail == "boolean 'httpd_can_network_connect' does not exist"
+    assert runner.calls == [GETSEBOOL]
+
+
+@pytest.mark.parametrize("rc", [1, 124, 126, 127])
+def test_boolean_runtime_error_stops(rc: int) -> None:
+    runner = bool_runner(None, sebool_rc=rc)
+    result = bool_check(runner).run()
+    assert not result.passed
+    assert result.detail == f"cannot query SELinux boolean (exit {rc})"
+    assert runner.calls == [GETSEBOOL]
+
+
+def test_boolean_semanage_needs_root() -> None:
+    result = bool_check(bool_runner("on", semanage_rc=1, semanage_out="")).run()
+    assert not result.passed
+    assert result.detail == "semanage requires root (run with sudo)"
+
+
+@pytest.mark.parametrize("rc", [2, 124, 127])
+def test_boolean_semanage_other_error(rc: int) -> None:
+    result = bool_check(bool_runner("on", semanage_rc=rc, semanage_out="")).run()
+    assert not result.passed
+    assert result.detail == f"cannot query SELinux booleans (exit {rc})"
+
+
+@pytest.mark.parametrize("stdout", ["", "garbage\n", "no --> maybe\n", "other --> on\n"])
+def test_boolean_runtime_unexpected_output(stdout: str) -> None:
+    runner = FakeCommandRunner({GETSEBOOL: make_result(GETSEBOOL, stdout=stdout)})
+    result = bool_check(runner).run()
+    assert not result.passed and result.detail == "unexpected getsebool output"
+    assert runner.calls == [GETSEBOOL]
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        "",
+        BOOL_HEADER,
+        BOOL_HEADER + bool_line("allow_ftpd_anon_write", "off", "off"),
+        "httpd_can_network_connect      broken line\n",
+        "httpd_can_network_connect      (on  ,  maybe)  desc\n",
+        "httpd_can_network_connect_db   (on  ,  on)  desc\n",
+    ],
+)
+def test_boolean_semanage_unexpected_output(listing: str) -> None:
+    result = bool_check(bool_runner("on", semanage_out=listing)).run()
+    assert not result.passed and result.detail == "unexpected semanage output"
+
+
+def test_boolean_exact_name_match_only() -> None:
+    listing = (
+        BOOL_HEADER
+        + bool_line("httpd_can_network_connect_db", "off", "off")
+        + bool_line("httpd_can_network_connect", "on", "on")
+    )
+    assert bool_check(bool_runner("on", semanage_out=listing)).run().passed
+
+
+@pytest.mark.parametrize("name", ["", "HTTPD", "a b", "-x", "a;b"])
+def test_boolean_invalid_name(name: str) -> None:
+    with pytest.raises(ValueError):
+        SelinuxBooleanIs(FakeCommandRunner({}), name)
+
+
+# --- SelinuxPortType ---
+
+PORT_HEADER = "SELinux Port Type              Proto    Port Number\n\n"
+PORT_LISTING = (
+    PORT_HEADER
+    + "http_cache_port_t              tcp      8080, 8118, 8123, 10001-10010\n"
+    + "http_port_t                    tcp      80, 81, 443, 488, 8008, 8009, 8443, 9000\n"
+    + "http_port_t                    udp      80\n"
+    + "unreserved_port_t              tcp      61000-65535, 1024-32767\n"
+)
+
+
+def port_runner(listing: str, rc: int = 0, stderr: str = "") -> FakeCommandRunner:
+    return FakeCommandRunner(
+        {SEMANAGE_PORT: make_result(SEMANAGE_PORT, returncode=rc, stdout=listing, stderr=stderr)}
+    )
+
+
+def port_check(runner: FakeCommandRunner, port: int = 80, protocol: str = "tcp",
+               selinux_type: str = "http_port_t") -> SelinuxPortType:  # fmt: skip
+    return SelinuxPortType(runner, port, protocol, selinux_type)
+
+
+def test_port_describe_and_satisfies_protocol() -> None:
+    check: Check = port_check(FakeCommandRunner({}), 82)
+    assert check.describe() == "port 82/tcp is labeled http_port_t"
+
+
+@pytest.mark.parametrize(
+    ("port", "protocol", "selinux_type"),
+    [
+        (80, "tcp", "http_port_t"),
+        (9000, "tcp", "http_port_t"),
+        (80, "udp", "http_port_t"),
+        (30000, "tcp", "unreserved_port_t"),
+        (1024, "tcp", "unreserved_port_t"),
+        (32767, "tcp", "unreserved_port_t"),
+        (61000, "tcp", "unreserved_port_t"),
+        (65535, "tcp", "unreserved_port_t"),
+        (10005, "tcp", "http_cache_port_t"),
+    ],
+)
+def test_port_labeled_is_ok(port: int, protocol: str, selinux_type: str) -> None:
+    runner = port_runner(PORT_LISTING)
+    result = port_check(runner, port, protocol, selinux_type).run()
+    assert result.passed
+    assert result.detail == f"port {port}/{protocol} is labeled {selinux_type}"
+    assert runner.calls == [SEMANAGE_PORT]
+
+
+def test_port_not_labeled_mentions_current_type() -> None:
+    result = port_check(port_runner(PORT_LISTING), 8080, "tcp", "http_port_t").run()
+    assert not result.passed
+    assert result.detail == (
+        "port 8080/tcp is not labeled http_port_t (currently labeled http_cache_port_t)"
+    )
+
+
+def test_port_multiple_other_types_uses_first() -> None:
+    listing = (
+        "a_port_t                       tcp      82\n"
+        "b_port_t                       tcp      82\n"
+    )
+    result = port_check(port_runner(listing), 82).run()
+    assert result.detail == "port 82/tcp is not labeled http_port_t (currently labeled a_port_t)"
+
+
+def test_port_unlabeled_is_ko() -> None:
+    result = port_check(port_runner(PORT_LISTING), 82).run()
+    assert not result.passed and result.detail == "port 82/tcp is not labeled http_port_t"
+
+
+def test_port_protocol_is_respected() -> None:
+    result = port_check(port_runner(PORT_LISTING), 443, "udp").run()
+    assert not result.passed and result.detail == "port 443/udp is not labeled http_port_t"
+
+
+def test_port_type_seen_only_under_other_protocol() -> None:
+    result = port_check(port_runner(PORT_LISTING), 8443, "udp").run()
+    assert not result.passed and result.detail == "port 8443/udp is not labeled http_port_t"
+
+
+def test_port_header_is_ignored() -> None:
+    listing = PORT_HEADER + "http_port_t                    tcp      82\n"
+    assert port_check(port_runner(listing), 82).run().passed
+
+
+def test_port_semanage_needs_root() -> None:
+    result = port_check(port_runner("", 1, SEMANAGE_ROOT_ERR)).run()
+    assert not result.passed and result.detail == "semanage requires root (run with sudo)"
+
+
+@pytest.mark.parametrize("rc", [2, 124, 126, 127])
+def test_port_other_error(rc: int) -> None:
+    result = port_check(port_runner("", rc)).run()
+    assert not result.passed and result.detail == f"cannot query SELinux ports (exit {rc})"
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        "",
+        PORT_HEADER,
+        "garbage\n",
+        "http_port_t                    tcp      80, abc\n",
+        "http_port_t                    tcp      80,\n",
+        "http_port_t                    tcp      90-80\n",
+        "http_port_t                    tcp      1-2-3\n",
+        "http_port_t                    tcp      0\n",
+        "http_port_t                    tcp      70000\n",
+    ],
+)
+def test_port_unexpected_output(listing: str) -> None:
+    result = port_check(port_runner(listing), 80).run()
+    assert not result.passed and result.detail == "unexpected semanage output"
+
+
+@pytest.mark.parametrize("port", [0, -1, 65536, True])
+def test_port_invalid_port(port: int) -> None:
+    with pytest.raises(ValueError):
+        SelinuxPortType(FakeCommandRunner({}), port, "tcp", "http_port_t")
+
+
+@pytest.mark.parametrize("protocol", ["", "TCP", "icmp"])
+def test_port_invalid_protocol(protocol: str) -> None:
+    with pytest.raises(ValueError):
+        SelinuxPortType(FakeCommandRunner({}), 80, protocol, "http_port_t")
+
+
+@pytest.mark.parametrize("selinux_type", ["", "http_port", "HTTP_t", "a b_t"])
+def test_port_invalid_type(selinux_type: str) -> None:
+    with pytest.raises(ValueError):
+        SelinuxPortType(FakeCommandRunner({}), 80, "tcp", selinux_type)
