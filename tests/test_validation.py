@@ -10,6 +10,8 @@ from rhcsa_sim.checks._validation import (
     validate_lvm_name,
     validate_port,
     validate_protocol,
+    validate_selinux_boolean,
+    validate_selinux_type,
     validate_unit_name,
     validate_uuid,
     validate_zone,
@@ -228,3 +230,27 @@ def test_valid_protocols(proto: str) -> None:
 def test_invalid_protocols(proto: str) -> None:
     with pytest.raises(ValueError):
         validate_protocol(proto)
+
+
+@pytest.mark.parametrize("name", ["httpd_sys_content_t", "default_t", "a_t", "a" * 126 + "_t"])
+def test_valid_selinux_types(name: str) -> None:
+    assert validate_selinux_type(name) == name
+
+
+@pytest.mark.parametrize(
+    "name", ["", "httpd", "_t", "HTTPD_t", "1a_t", "a-b_t", "a b_t", "a_t\n", "a" * 127 + "_t"]
+)
+def test_invalid_selinux_types(name: str) -> None:
+    with pytest.raises(ValueError):
+        validate_selinux_type(name)
+
+
+@pytest.mark.parametrize("name", ["httpd_can_network_connect", "a", "allow_ftpd_anon_write2"])
+def test_valid_selinux_booleans(name: str) -> None:
+    assert validate_selinux_boolean(name) == name
+
+
+@pytest.mark.parametrize("name", ["", "_x", "1a", "HTTPD", "a-b", "a b", "a;b", "a\n", "a" * 129])
+def test_invalid_selinux_booleans(name: str) -> None:
+    with pytest.raises(ValueError):
+        validate_selinux_boolean(name)

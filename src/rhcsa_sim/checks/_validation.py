@@ -16,6 +16,7 @@ _UNIT_NAME_RE = re.compile(
 )
 _ZONE_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,16}")
 _FIREWALL_SERVICE_RE = re.compile(r"[a-z0-9][a-z0-9_.+-]{0,63}")
+_SELINUX_NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,127}")
 _PROTOCOLS = frozenset({"tcp", "udp", "sctp", "dccp"})
 _ACL_PERMS = r"[r-][w-][x-]"
 _ACL_ENTRY_RE = re.compile(
@@ -100,3 +101,16 @@ def validate_protocol(proto: str) -> str:
     if proto not in _PROTOCOLS:
         raise ValueError(f"invalid protocol: {proto!r}")
     return proto
+
+
+def validate_selinux_type(name: str) -> str:
+    """Tipo SELinux: minusculas, digitos y '_', y termina en '_t'."""
+    if not _SELINUX_NAME_RE.fullmatch(name) or not name.endswith("_t"):
+        raise ValueError(f"invalid SELinux type: {name!r}")
+    return name
+
+
+def validate_selinux_boolean(name: str) -> str:
+    if not _SELINUX_NAME_RE.fullmatch(name):
+        raise ValueError(f"invalid SELinux boolean: {name!r}")
+    return name
