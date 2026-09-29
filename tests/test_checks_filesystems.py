@@ -118,6 +118,46 @@ def test_mounted_invalid_fstype(fstype: str) -> None:
         MountedAt(fake(), "/data", fstype)
 
 
+def test_mounted_source_matches_ok() -> None:
+    assert MountedAt(fake(), "/data", "xfs", DEVICE).run().passed
+
+
+def test_mounted_source_mismatch_reports_both() -> None:
+    result = MountedAt(fake(mount=(table("/dev/sdb2"), 0)), "/data", "xfs", DEVICE).run()
+    assert not result.passed
+    assert "/dev/sdb2" in result.detail and DEVICE in result.detail
+
+
+def test_mounted_source_is_compared_exactly() -> None:
+    result = MountedAt(fake(mount=(table(f"{DEVICE}x"), 0)), "/data", None, DEVICE).run()
+    assert not result.passed
+
+
+@pytest.mark.parametrize("source", ["", "sdb1", "/dev/../x", "/etc/passwd"])
+def test_mounted_invalid_source(source: str) -> None:
+    with pytest.raises(ValueError):
+        MountedAt(fake(), "/data", "xfs", source)
+
+
+def test_mounted_describe_mentions_source() -> None:
+    assert DEVICE in MountedAt(fake(), "/data", "xfs", DEVICE).describe()
+    assert DEVICE in MountedAt(fake(), "/data", None, DEVICE).describe()
+
+
+def test_mounted_null_options_still_parses() -> None:
+    row = '{"filesystems": [{"target": "/data", "source": "%s", "fstype": "xfs", "options": null}]}'
+    assert MountedAt(fake(mount=(row % DEVICE, 0)), "/data", "xfs", DEVICE).run().passed
+
+
+@pytest.mark.parametrize("column", ["source", "fstype"])
+def test_mounted_null_required_column_is_unexpected(column: str) -> None:
+    row: dict[str, object] = {"target": "/data", "source": DEVICE, "fstype": "xfs"}
+    row[column] = None
+    stdout = json.dumps({"filesystems": [row]})
+    result = MountedAt(fake(mount=(stdout, 0)), "/data").run()
+    assert not result.passed and "unexpected" in result.detail
+
+
 # --- FstabMountByUuid ---
 
 
@@ -218,6 +258,7 @@ def test_matches_unsafe_mounted_source_never_reaches_blkid(source: str) -> None:
 def test_matches_device_without_uuid() -> None:
     result = FstabUuidMatchesMount(fake(blkid=("", 2)), "/data").run()
     assert not result.passed and "no UUID" in result.detail
+    assert "retry with sudo" in result.detail
 
 
 @pytest.mark.parametrize("rc", [1, 3, 124, 126, 127])

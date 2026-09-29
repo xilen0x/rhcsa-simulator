@@ -95,7 +95,7 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(
-                    MountedAt(runner, "/data", "xfs"),
+                    MountedAt(runner, "/data", "xfs", "/dev/mapper/examvg-datalv"),
                     FstabMountByUuid(runner, "/data", "xfs"),
                     FstabUuidMatchesMount(runner, "/data"),
                 ),

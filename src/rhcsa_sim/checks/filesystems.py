@@ -16,6 +16,7 @@ Row = dict[str, str]
 
 _COLUMNS = "TARGET,SOURCE,FSTYPE,OPTIONS"
 _UUID_PREFIX = "UUID="
+_REQUIRED_COLUMNS = ("source", "fstype")
 
 
 def _parse_findmnt(stdout: str) -> list[Row] | None:
@@ -33,13 +34,14 @@ def _parse_findmnt(stdout: str) -> list[Row] | None:
     for entry in entries:
         if not isinstance(entry, dict):
             return None
+        # solo se exigen strings en las columnas que usan los checks;
+        # el resto puede venir null o faltar segun la version de util-linux
         row: Row = {}
-        for key, value in entry.items():
-            if not isinstance(key, str) or not isinstance(value, str):
+        for key in _REQUIRED_COLUMNS:
+            value = entry.get(key)
+            if not isinstance(value, str):
                 return None
             row[key] = value
-        if "source" not in row or "fstype" not in row:
-            return None
         rows.append(row)
     return rows
 
@@ -101,7 +103,9 @@ def _query_device_uuid(runner: CommandRunner, device: str) -> str | CheckResult:
     argv = ["blkid", "-o", "value", "-s", "UUID", "--", device]
     result = runner.run(argv)
     if result.returncode == 2 and not result.stdout.strip():
-        return CheckResult(False, f"'{device}' has no UUID")
+        return CheckResult(
+            False, f"'{device}' has no UUID (if not running as root, retry with sudo)"
+        )
     if not result.ok:
         return _query_failed(f"UUID of '{device}'", result)
     try:
@@ -115,16 +119,22 @@ class MountedAt:
     runner: CommandRunner
     target: str
     fstype: str | None = None
+    source: str | None = None
 
     def __post_init__(self) -> None:
         validate_absolute_path(self.target)
         if self.fstype is not None:
             validate_fstype(self.fstype)
+        if self.source is not None:
+            validate_block_device(self.source)
 
     def describe(self) -> str:
-        if self.fstype is None:
-            return f"{self.target} is mounted"
-        return f"{self.target} is mounted as {self.fstype}"
+        text = f"{self.target} is mounted"
+        if self.fstype is not None:
+            text += f" as {self.fstype}"
+        if self.source is not None:
+            text += f" from {self.source}"
+        return text
 
     def run(self) -> CheckResult:
         row = _query_mount(self.runner, self.target)
@@ -133,6 +143,10 @@ class MountedAt:
         mismatch = _fstype_mismatch(row, self.fstype)
         if mismatch is not None:
             return mismatch
+        if self.source is not None and row["source"] != self.source:
+            return CheckResult(
+                False, f"mounted source is {row['source']}, expected {self.source}"
+            )
         return CheckResult(True, f"'{self.target}' is mounted ({row['fstype']})")
 
 

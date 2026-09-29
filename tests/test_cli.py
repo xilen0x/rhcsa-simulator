@@ -33,7 +33,6 @@ MOUNT = ("findmnt", "-J", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/d
 FSTAB = (
     "findmnt", "-J", "--fstab", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/data",
 )  # fmt: skip
-BLKID = ("blkid", "-o", "value", "-s", "UUID", "--", DEVICE)
 GETFACL = ("getfacl", "--omit-header", "--absolute-names", "--no-effective", "--", "/data")
 MOUNT_OUT = (
     f'{{"filesystems": [{{"target": "/data", "source": "{DEVICE}", '
@@ -50,10 +49,14 @@ def fs_out(stdout: str, rc: int) -> str:
     return stdout if rc == 0 else ""
 
 
-def make_runner(group_rc: int = 0, lvm_rc: int = 0, fs_rc: int = 0) -> FakeCommandRunner:
+def make_runner(
+    group_rc: int = 0, lvm_rc: int = 0, fs_rc: int = 0, mount_device: str = DEVICE
+) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
     lvm_err = "" if lvm_rc == 0 else "WARNING: Running as a non-root user.\n"
+    mount_out = MOUNT_OUT.replace(DEVICE, mount_device)
+    blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
             GROUP: make_result(GROUP, returncode=group_rc, stdout=group_out),
@@ -63,9 +66,9 @@ def make_runner(group_rc: int = 0, lvm_rc: int = 0, fs_rc: int = 0) -> FakeComma
             VGS: make_result(VGS, returncode=lvm_rc, stdout=VGS_OUT, stderr=lvm_err),
             PVS: make_result(PVS, returncode=lvm_rc, stdout=PVS_OUT, stderr=lvm_err),
             LVS: make_result(LVS, returncode=lvm_rc, stdout=LVS_OUT, stderr=lvm_err),
-            MOUNT: make_result(MOUNT, returncode=fs_rc, stdout=fs_out(MOUNT_OUT, fs_rc)),
+            MOUNT: make_result(MOUNT, returncode=fs_rc, stdout=fs_out(mount_out, fs_rc)),
             FSTAB: make_result(FSTAB, returncode=fs_rc, stdout=fs_out(FSTAB_OUT, fs_rc)),
-            BLKID: make_result(BLKID, stdout=f"{UUID}\n"),
+            blkid: make_result(blkid, stdout=f"{UUID}\n"),
             GETFACL: make_result(GETFACL, returncode=fs_rc, stdout=fs_out(ACL_OUT, fs_rc)),
         }
     )
@@ -124,6 +127,13 @@ def test_check_filesystem_tasks_ok_and_ko() -> None:
     assert code == 1 and "[KO] fs-01" in out and "not mounted" in out
     code, out, _ = run_cli(["check", "fs-02"], make_runner(fs_rc=127))
     assert code == 1 and "[KO] fs-02" in out and "install package acl" in out
+
+
+def test_check_fs_01_fails_when_mounted_from_another_device() -> None:
+    runner = make_runner(mount_device="/dev/sdb2")
+    code, out, _ = run_cli(["check", "fs-01"], runner)
+    assert code == 1 and "[KO] fs-01" in out
+    assert "/dev/sdb2" in out and DEVICE in out
 
 
 def test_check_requires_exactly_one_selector() -> None:
