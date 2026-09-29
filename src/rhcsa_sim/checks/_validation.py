@@ -20,6 +20,9 @@ _FIREWALL_SERVICE_RE = re.compile(r"[a-z0-9][a-z0-9_.+-]{0,63}")
 _SSHD_KEYWORD_RE = re.compile(r"[a-z][a-z0-9]{0,63}")
 _SELINUX_NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,127}")
 _HOSTNAME_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+_REPO_ID_RE = re.compile(r"[A-Za-z0-9_.:][A-Za-z0-9_.:-]{0,99}")
+_PACKAGE_NAME_RE = re.compile(r"[A-Za-z0-9_+.][A-Za-z0-9_+.-]{0,127}")
+_TUNED_PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 _PROTOCOLS = frozenset({"tcp", "udp", "sctp", "dccp"})
 _ACL_PERMS = r"[r-][w-][x-]"
 _ACL_ENTRY_RE = re.compile(
@@ -162,4 +165,24 @@ def validate_sshd_keyword(name: str) -> str:
     """Keyword de sshd -T: minusculas y digitos, tal como las imprime sshd."""
     if not _SSHD_KEYWORD_RE.fullmatch(name):
         raise ValueError(f"invalid sshd keyword: {name!r}")
+    return name
+
+
+def validate_repo_id(name: str) -> str:
+    """Id de repositorio dnf: sin '-' inicial."""
+    if not _REPO_ID_RE.fullmatch(name):
+        raise ValueError(f"invalid repository id: {name!r}")
+    return name
+
+
+def validate_package_name(name: str) -> str:
+    """Nombre de paquete rpm: sin '-' inicial (se usa tras '--')."""
+    if not _PACKAGE_NAME_RE.fullmatch(name):
+        raise ValueError(f"invalid package name: {name!r}")
+    return name
+
+
+def validate_tuned_profile(name: str) -> str:
+    if not _TUNED_PROFILE_RE.fullmatch(name):
+        raise ValueError(f"invalid tuned profile: {name!r}")
     return name
