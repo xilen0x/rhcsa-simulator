@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from rhcsa_sim.checks._units import format_size
 from rhcsa_sim.checks._validation import validate_block_device, validate_lvm_name
 from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandResult, CommandRunner
-
-MIB = 1024 * 1024
 
 Row = dict[str, str]
 
@@ -46,12 +45,6 @@ def _parse_bytes(text: str) -> int | None:
     if not text or not text.isascii() or not text.isdigit():
         return None
     return int(text)
-
-
-def _format_size(value: int) -> str:
-    if value % MIB == 0:
-        return f"{value // MIB} MiB"
-    return f"{value} bytes"
 
 
 def _log_messages(stdout: str) -> list[str]:
@@ -157,7 +150,7 @@ class VolumeGroupExists:
     def describe(self) -> str:
         if self.extent_size is None:
             return f"volume group {self.name} exists"
-        return f"volume group {self.name} exists with {_format_size(self.extent_size)} extents"
+        return f"volume group {self.name} exists with {format_size(self.extent_size)} extents"
 
     def run(self) -> CheckResult:
         rows = _query_vg(self.runner, self.name)
@@ -173,9 +166,9 @@ class VolumeGroupExists:
         if actual != self.extent_size:
             return CheckResult(
                 False,
-                f"extent size is {_format_size(actual)}, expected {_format_size(self.extent_size)}",
+                f"extent size is {format_size(actual)}, expected {format_size(self.extent_size)}",
             )
-        return CheckResult(True, f"extent size is {_format_size(actual)}")
+        return CheckResult(True, f"extent size is {format_size(actual)}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,7 +235,7 @@ class LogicalVolumeSizeInRange:
             raise ValueError("size bounds must satisfy 0 < min_bytes <= max_bytes")
 
     def describe(self) -> str:
-        low, high = _format_size(self.min_bytes), _format_size(self.max_bytes)
+        low, high = format_size(self.min_bytes), format_size(self.max_bytes)
         return f"logical volume {self.vg}/{self.lv} size is between {low} and {high}"
 
     def run(self) -> CheckResult:
@@ -255,8 +248,8 @@ class LogicalVolumeSizeInRange:
         if size is None:
             return CheckResult(False, "unexpected logical volume size in LVM output")
         if not self.min_bytes <= size <= self.max_bytes:
-            low, high = _format_size(self.min_bytes), _format_size(self.max_bytes)
+            low, high = format_size(self.min_bytes), format_size(self.max_bytes)
             return CheckResult(
-                False, f"size is {_format_size(size)}, outside {low} - {high}"
+                False, f"size is {format_size(size)}, outside {low} - {high}"
             )
-        return CheckResult(True, f"size is {_format_size(size)}")
+        return CheckResult(True, f"size is {format_size(size)}")

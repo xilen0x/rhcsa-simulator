@@ -5,8 +5,8 @@ from collections.abc import Callable
 
 import pytest
 
+from rhcsa_sim.checks._units import MIB
 from rhcsa_sim.checks.storage import (
-    MIB,
     LogicalVolumeExists,
     LogicalVolumeSizeInRange,
     PhysicalVolumeInGroup,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from rhcsa_sim.checks._units import MIB
 from rhcsa_sim.checks.acl import PathHasAclEntry
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
@@ -12,7 +13,6 @@ from rhcsa_sim.checks.selinux import (
 )
 from rhcsa_sim.checks.services import DefaultTarget, UnitActiveStateIs, UnitFileStateIs
 from rhcsa_sim.checks.storage import (
-    MIB,
     LogicalVolumeExists,
     LogicalVolumeSizeInRange,
     PhysicalVolumeInGroup,
