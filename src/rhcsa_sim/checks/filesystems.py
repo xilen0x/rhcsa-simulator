@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 
+from rhcsa_sim.checks._findmnt import COLUMNS, Row, parse_findmnt
 from rhcsa_sim.checks._validation import (
     validate_absolute_path,
     validate_block_device,
@@ -12,38 +12,7 @@ from rhcsa_sim.checks._validation import (
 from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandResult, CommandRunner
 
-Row = dict[str, str]
-
-_COLUMNS = "TARGET,SOURCE,FSTYPE,OPTIONS"
 _UUID_PREFIX = "UUID="
-_REQUIRED_COLUMNS = ("source", "fstype")
-
-
-def _parse_findmnt(stdout: str) -> list[Row] | None:
-    """Extrae las filas del JSON de findmnt. None si la forma es inesperada."""
-    try:
-        data = json.loads(stdout)
-    except ValueError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    entries = data.get("filesystems")
-    if not isinstance(entries, list):
-        return None
-    rows: list[Row] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            return None
-        # solo se exigen strings en las columnas que usan los checks;
-        # el resto puede venir null o faltar segun la version de util-linux
-        row: Row = {}
-        for key in _REQUIRED_COLUMNS:
-            value = entry.get(key)
-            if not isinstance(value, str):
-                return None
-            row[key] = value
-        rows.append(row)
-    return rows
 
 
 def _query_failed(what: str, result: CommandResult) -> CheckResult:
@@ -57,14 +26,14 @@ def _findmnt(
     argv = ["findmnt", "-J"]
     if fstab:
         argv.append("--fstab")
-    argv += ["-o", _COLUMNS, f"--mountpoint={target}"]
+    argv += ["-o", COLUMNS, f"--mountpoint={target}"]
     what = "/etc/fstab" if fstab else f"mount of '{target}'"
     result = runner.run(argv)
     if result.returncode == 1 and not result.stdout.strip():
         return CheckResult(False, absent)
     if not result.ok:
         return _query_failed(what, result)
-    rows = _parse_findmnt(result.stdout)
+    rows = parse_findmnt(result.stdout)
     if rows is None:
         return CheckResult(False, f"unexpected findmnt output while querying {what}")
     if not rows:

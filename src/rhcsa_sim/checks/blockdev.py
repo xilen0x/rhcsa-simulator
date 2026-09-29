@@ -4,13 +4,16 @@ import json
 from dataclasses import dataclass
 
 from rhcsa_sim.checks._units import format_size
-from rhcsa_sim.checks._validation import validate_block_device
+from rhcsa_sim.checks._findmnt import COLUMNS, parse_findmnt
+from rhcsa_sim.checks._validation import validate_block_device, validate_uuid
 from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandRunner
 
 _LSBLK_COLUMNS = "PATH,KNAME,SIZE,TYPE,FSTYPE,UUID,PARTTYPENAME"
 _NOT_A_BLOCK_DEVICE = "not a block device"
 _LSBLK_MISSING_RC = 32
+_SWAPON_ARGV = ["swapon", "--show=NAME,SIZE", "--bytes", "--noheadings", "--raw"]
+_UUID_PREFIX = "UUID="
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,3 +118,88 @@ class PartitionExists:
                 False, f"size is {format_size(row.size)}, outside {low} - {high}"
             )
         return CheckResult(True, f"'{self.device}' is a partition of {format_size(row.size)}")
+
+
+def _query_swaps(runner: CommandRunner) -> set[str] | CheckResult:
+    """Nombres (/dev/...) de los swaps activos; salida vacia = ninguno."""
+    result = runner.run(_SWAPON_ARGV)
+    if not result.ok:
+        return CheckResult(False, f"cannot query active swap (exit {result.returncode})")
+    names: set[str] = set()
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 2 or not fields[1].isascii() or not fields[1].isdigit():
+            return CheckResult(False, "unexpected swapon output while querying active swap")
+        names.add(fields[0])
+    return names
+
+
+@dataclass(frozen=True, slots=True)
+class SwapActive:
+    runner: CommandRunner
+    device: str
+
+    def __post_init__(self) -> None:
+        validate_block_device(self.device)
+
+    def describe(self) -> str:
+        return f"{self.device} is formatted as swap and active"
+
+    def run(self) -> CheckResult:
+        row = _query_device(self.runner, self.device)
+        if isinstance(row, CheckResult):
+            return row
+        if row.fstype != "swap":
+            return CheckResult(
+                False, f"'{self.device}' is not formatted as swap (fstype: {row.fstype})"
+            )
+        active = _query_swaps(self.runner)
+        if isinstance(active, CheckResult):
+            return active
+        # swapon lista nombres del kernel (/dev/dm-1), no rutas de /dev/mapper
+        if f"/dev/{row.kname}" not in active:
+            return CheckResult(False, f"'{self.device}' is not an active swap (run swapon)")
+        return CheckResult(True, f"'{self.device}' is an active swap")
+
+
+@dataclass(frozen=True, slots=True)
+class SwapInFstabByUuid:
+    runner: CommandRunner
+    device: str
+
+    def __post_init__(self) -> None:
+        validate_block_device(self.device)
+
+    def describe(self) -> str:
+        return f"{self.device} has a persistent swap entry by UUID in /etc/fstab"
+
+    def run(self) -> CheckResult:
+        row = _query_device(self.runner, self.device)
+        if isinstance(row, CheckResult):
+            return row
+        if row.uuid is None:
+            return CheckResult(False, f"'{self.device}' has no UUID")
+        try:
+            uuid = validate_uuid(row.uuid)
+        except ValueError:
+            return CheckResult(False, f"'{self.device}' has a malformed UUID")
+        argv = ["findmnt", "-J", "--fstab", "-t", "swap", "-o", COLUMNS]
+        result = self.runner.run(argv)
+        if result.returncode == 1 and not result.stdout.strip():
+            return CheckResult(False, "no swap entries in /etc/fstab")
+        if not result.ok:
+            return CheckResult(False, f"cannot query /etc/fstab (exit {result.returncode})")
+        entries = parse_findmnt(result.stdout)
+        if entries is None:
+            return CheckResult(False, "unexpected findmnt output while querying /etc/fstab")
+        swaps = [entry["source"] for entry in entries if entry["fstype"] == "swap"]
+        if not swaps:
+            return CheckResult(False, "no swap entries in /etc/fstab")
+        wanted = f"{_UUID_PREFIX}{uuid}".lower()
+        if any(source.lower() == wanted for source in swaps):
+            return CheckResult(True, f"fstab has a swap entry for {_UUID_PREFIX}{uuid}")
+        if self.device in swaps:
+            return CheckResult(
+                False, f"fstab references '{self.device}' by path; use {_UUID_PREFIX}{uuid}"
+            )
+        return CheckResult(False, f"no fstab swap entry for {_UUID_PREFIX}{uuid}")
