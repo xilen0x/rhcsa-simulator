@@ -157,7 +157,8 @@ def _on_off(enabled: bool) -> str:
 
 
 def _query_runtime_boolean(runner: CommandRunner, name: str) -> bool | CheckResult:
-    result = runner.run(["getsebool", "--", name])
+    # getsebool no acepta "--"; el nombre validado nunca empieza por "-"
+    result = runner.run(["getsebool", name])
     if not result.ok:
         if result.returncode == 255 and "Error getting active value" in result.stderr:
             return CheckResult(False, f"boolean '{name}' does not exist")

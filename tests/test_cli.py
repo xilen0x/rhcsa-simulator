@@ -54,7 +54,7 @@ FW_PORT_RUN = ("firewall-cmd", "--zone=public", "--query-port=8080/tcp")
 SESTATUS = ("sestatus",)
 SE_STAT = ("stat", "-c", "%C", "--", "/srv/web")
 SE_RULE = ("matchpathcon", "-n", "--", "/srv/web")
-GETSEBOOL = ("getsebool", "--", "httpd_can_network_connect")
+GETSEBOOL = ("getsebool", "httpd_can_network_connect")
 SEMANAGE_BOOL = ("semanage", "boolean", "-l")
 SEMANAGE_PORT = ("semanage", "port", "-l")
 SE_CONTEXT = "system_u:object_r:httpd_sys_content_t:s0\n"

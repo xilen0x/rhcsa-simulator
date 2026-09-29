@@ -15,7 +15,7 @@ from rhcsa_sim.testing import FakeCommandRunner, make_result
 SESTATUS = ("sestatus",)
 STAT = ("stat", "-c", "%C", "--", "/srv/web")
 RULE = ("matchpathcon", "-n", "--", "/srv/web")
-GETSEBOOL = ("getsebool", "--", "httpd_can_network_connect")
+GETSEBOOL = ("getsebool", "httpd_can_network_connect")
 SEMANAGE_BOOL = ("semanage", "boolean", "-l")
 SEMANAGE_PORT = ("semanage", "port", "-l")
 SEMANAGE_ROOT_ERR = "ValueError: SELinux policy is not managed or store cannot be accessed.\n"
