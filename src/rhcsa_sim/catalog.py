@@ -6,6 +6,12 @@ from rhcsa_sim.checks.blockdev import PartitionExists, SwapActive, SwapInFstabBy
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
+from rhcsa_sim.checks.maintenance import (
+    CronEntryExists,
+    PackageInstalled,
+    RepoNotEnabled,
+    TunedProfileIs,
+)
 from rhcsa_sim.checks.network import (
     ConnectionAutoconnect,
     ConnectionHasDns,
@@ -264,6 +270,48 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                     SudoersValid(runner),
                     UserHasSudoRule(runner, "alice", "ALL", nopasswd=True),
                 ),
+            ),
+            Task(
+                id="dnf-01",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description=(
+                    "Asegura que el repositorio defectuoso exam-internal no este habilitado "
+                    "(deshabilitalo o eliminalo)."
+                ),
+                points=10,
+                checks=(RepoNotEnabled(runner, "exam-internal"),),
+            ),
+            Task(
+                id="pkg-01",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description=(
+                    "Instala el paquete at y deja el servicio atd habilitado y en ejecucion."
+                ),
+                points=10,
+                checks=(
+                    PackageInstalled(runner, "at"),
+                    UnitFileStateIs(runner, "atd.service", "enabled"),
+                    UnitActiveStateIs(runner, "atd.service", "active"),
+                ),
+            ),
+            Task(
+                id="cron-01",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description=(
+                    "Programa para el usuario alice la ejecucion diaria de /usr/bin/date "
+                    "a las 14:30 con cron."
+                ),
+                points=10,
+                checks=(CronEntryExists(runner, "alice", "30 14 * * *", "/usr/bin/date"),),
+            ),
+            Task(
+                id="tuned-01",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description=(
+                    "Aplica el perfil de tuned recomendado para esta VM (virtual-guest)."
+                ),
+                points=10,
+                checks=(TunedProfileIs(runner, "virtual-guest"),),
             ),
         ]
     )

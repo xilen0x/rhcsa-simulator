@@ -104,6 +104,14 @@ SUDO_L_OUT = (
     "Matching Defaults entries for alice on localhost:\n    !visiblepw\n\n"
     "User alice may run the following commands on localhost:\n    (ALL) NOPASSWD: ALL\n"
 )
+REPOLIST = ("dnf", "repolist", "--all")
+RPM_AT = ("rpm", "-q", "--", "at")
+SHOW_ATD = (
+    "systemctl", "show", "--property=LoadState,ActiveState,UnitFileState", "--", "atd.service",
+)  # fmt: skip
+CRON_ALICE = ("crontab", "-l", "-u", "alice")
+TUNED = ("tuned-adm", "active")
+CRON_OUT = "MAILTO=root\n30 14 * * * /usr/bin/date\n"
 ACL_OUT = "user::rwx\nuser:alice:rwx\ngroup::r-x\nmask::rwx\nother::---\n"
 
 
@@ -126,6 +134,8 @@ def make_runner(
     running_hostname: str = HOSTNAME,
     root_rc: int = 0,
     permit_root_login: str = "no",
+    repo_status: str = "disabled",
+    tuned_profile: str = "virtual-guest",
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -152,6 +162,13 @@ def make_runner(
     visudo_err = "visudo: unable to open /etc/sudoers: Permission denied\n" if root_rc else ""
     sudo_err = "sudo: a password is required\n" if root_rc else ""
     sshd_out = SSHD_OUT.replace("permitrootlogin no", f"permitrootlogin {permit_root_login}")
+    repolist_out = (
+        "repo id         repo name                  status\n"
+        "baseos          AlmaLinux 10 - BaseOS      enabled\n"
+        f"exam-internal  Exam Internal Repository   {repo_status}\n"
+    )
+    # sin root, crontab -u dice "must be privileged"
+    cron_err = "must be privileged to use -u\n" if root_rc else ""
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
@@ -191,6 +208,16 @@ def make_runner(
             SUDO_L: make_result(
                 SUDO_L, returncode=root_rc, stderr=sudo_err,
                 stdout="" if root_rc else SUDO_L_OUT,
+            ),
+            REPOLIST: make_result(REPOLIST, stdout=repolist_out),
+            RPM_AT: make_result(RPM_AT, stdout="at-3.2.5-13.el10.x86_64\n"),
+            SHOW_ATD: make_result(SHOW_ATD, returncode=svc_rc, stdout=show_out),
+            CRON_ALICE: make_result(
+                CRON_ALICE, returncode=root_rc, stderr=cron_err,
+                stdout="" if root_rc else CRON_OUT,
+            ),
+            TUNED: make_result(
+                TUNED, stdout=f"Current active profile: {tuned_profile}\n"
             ),
             SESTATUS: make_result(SESTATUS, stdout=sestatus_out),
             SE_RULE: make_result(SE_RULE, stdout=SE_CONTEXT),
@@ -237,7 +264,7 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "210/210" in out and "PASS" in out
+    assert "250/250" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
@@ -247,7 +274,7 @@ def test_check_all_with_failure() -> None:
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "40/210" in out and "FAIL" in out
+    assert "60/250" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -335,6 +362,19 @@ def test_check_security_tasks_ok_and_ko() -> None:
     assert code == 1 and "[KO] sec-01" in out and "sudo" in out
     code, out, _ = run_cli(["check", "sec-02"], make_runner(root_rc=1))
     assert code == 1 and "[KO] sec-02" in out and "requires root" in out
+
+
+def test_check_maintenance_tasks_ok_and_ko() -> None:
+    for task_id in ("dnf-01", "pkg-01", "cron-01", "tuned-01"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+    code, out, _ = run_cli(["check", "tuned-01"], make_runner(tuned_profile="throughput-performance"))
+    assert code == 1 and "[KO] tuned-01" in out
+    assert "throughput-performance" in out and "virtual-guest" in out
+    code, out, _ = run_cli(["check", "dnf-01"], make_runner(repo_status="enabled"))
+    assert code == 1 and "[KO] dnf-01" in out and "enabled" in out
+    code, out, _ = run_cli(["check", "cron-01"], make_runner(root_rc=1))
+    assert code == 1 and "[KO] cron-01" in out and "sudo" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:
