@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from rhcsa_sim.checks.acl import PathHasAclEntry
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
+from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
 from rhcsa_sim.checks.storage import (
     MIB,
     LogicalVolumeExists,
@@ -83,6 +85,29 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                     LogicalVolumeExists(runner, "examvg", "datalv"),
                     LogicalVolumeSizeInRange(runner, "examvg", "datalv", 960 * MIB, 1088 * MIB),
                 ),
+            ),
+            Task(
+                id="fs-01",
+                block=ObjectiveBlock.FILE_SYSTEMS,
+                description=(
+                    "Monta de forma persistente el volumen logico examvg/datalv en /data "
+                    "con sistema de archivos xfs, usando su UUID en /etc/fstab."
+                ),
+                points=10,
+                checks=(
+                    MountedAt(runner, "/data", "xfs"),
+                    FstabMountByUuid(runner, "/data", "xfs"),
+                    FstabUuidMatchesMount(runner, "/data"),
+                ),
+            ),
+            Task(
+                id="fs-02",
+                block=ObjectiveBlock.FILE_SYSTEMS,
+                description=(
+                    "Configura una ACL en /data que conceda al usuario 'alice' permisos rwx."
+                ),
+                points=10,
+                checks=(PathHasAclEntry(runner, "/data", "user:alice:rwx"),),
             ),
         ]
     )

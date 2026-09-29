@@ -27,9 +27,30 @@ LVS_OUT = (
     '{"report": [{"lv": [{"vg_name": "examvg", "lv_name": "datalv", '
     '"lv_size": "1073741824"}]}]}'
 )
+DEVICE = "/dev/mapper/examvg-datalv"
+UUID = "476c00b7-0000-45fe-a368-d4b5f25a5ee1"
+MOUNT = ("findmnt", "-J", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/data")
+FSTAB = (
+    "findmnt", "-J", "--fstab", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/data",
+)  # fmt: skip
+BLKID = ("blkid", "-o", "value", "-s", "UUID", "--", DEVICE)
+GETFACL = ("getfacl", "--omit-header", "--absolute-names", "--no-effective", "--", "/data")
+MOUNT_OUT = (
+    f'{{"filesystems": [{{"target": "/data", "source": "{DEVICE}", '
+    '"fstype": "xfs", "options": "rw,relatime"}]}'
+)
+FSTAB_OUT = (
+    f'{{"filesystems": [{{"target": "/data", "source": "UUID={UUID}", '
+    '"fstype": "xfs", "options": "defaults"}]}'
+)
+ACL_OUT = "user::rwx\nuser:alice:rwx\ngroup::r-x\nmask::rwx\nother::---\n"
 
 
-def make_runner(group_rc: int = 0, lvm_rc: int = 0) -> FakeCommandRunner:
+def fs_out(stdout: str, rc: int) -> str:
+    return stdout if rc == 0 else ""
+
+
+def make_runner(group_rc: int = 0, lvm_rc: int = 0, fs_rc: int = 0) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
     lvm_err = "" if lvm_rc == 0 else "WARNING: Running as a non-root user.\n"
@@ -42,6 +63,10 @@ def make_runner(group_rc: int = 0, lvm_rc: int = 0) -> FakeCommandRunner:
             VGS: make_result(VGS, returncode=lvm_rc, stdout=VGS_OUT, stderr=lvm_err),
             PVS: make_result(PVS, returncode=lvm_rc, stdout=PVS_OUT, stderr=lvm_err),
             LVS: make_result(LVS, returncode=lvm_rc, stdout=LVS_OUT, stderr=lvm_err),
+            MOUNT: make_result(MOUNT, returncode=fs_rc, stdout=fs_out(MOUNT_OUT, fs_rc)),
+            FSTAB: make_result(FSTAB, returncode=fs_rc, stdout=fs_out(FSTAB_OUT, fs_rc)),
+            BLKID: make_result(BLKID, stdout=f"{UUID}\n"),
+            GETFACL: make_result(GETFACL, returncode=fs_rc, stdout=fs_out(ACL_OUT, fs_rc)),
         }
     )
 
@@ -75,19 +100,30 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "50/50" in out and "PASS" in out
+    assert "70/70" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
-    code, out, _ = run_cli(["check", "--all"], make_runner(group_rc=2, lvm_rc=5))
+    code, out, _ = run_cli(["check", "--all"], make_runner(group_rc=2, lvm_rc=5, fs_rc=1))
     assert code == 1
-    assert "20/50" in out and "FAIL" in out
+    assert "20/70" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
     code, out, _ = run_cli(["check", "storage-01"], make_runner(lvm_rc=5))
     assert code == 1 and "[KO] storage-01" in out
     assert "exit 5" in out and "sudo" in out
+
+
+def test_check_filesystem_tasks_ok_and_ko() -> None:
+    code, out, _ = run_cli(["check", "fs-01"], make_runner())
+    assert code == 0 and "[OK] fs-01" in out
+    code, out, _ = run_cli(["check", "fs-02"], make_runner())
+    assert code == 0 and "[OK] fs-02" in out
+    code, out, _ = run_cli(["check", "fs-01"], make_runner(fs_rc=1))
+    assert code == 1 and "[KO] fs-01" in out and "not mounted" in out
+    code, out, _ = run_cli(["check", "fs-02"], make_runner(fs_rc=127))
+    assert code == 1 and "[KO] fs-02" in out and "install package acl" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:
