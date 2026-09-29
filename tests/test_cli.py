@@ -31,15 +31,17 @@ LVS_OUT = (
 
 def make_runner(group_rc: int = 0, lvm_rc: int = 0) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
+    # sin root, LVM avisa por stderr y sale con codigo distinto de cero
+    lvm_err = "" if lvm_rc == 0 else "WARNING: Running as a non-root user.\n"
     return FakeCommandRunner(
         {
             GROUP: make_result(GROUP, returncode=group_rc, stdout=group_out),
             PASSWD: make_result(PASSWD, stdout="alice:x:1234:1234:A:/home/alice:/bin/bash\n"),
             IDG: make_result(IDG, stdout="alice devs\n"),
             STAT: make_result(STAT, stdout="2770 root devs\n"),
-            VGS: make_result(VGS, returncode=lvm_rc, stdout=VGS_OUT if lvm_rc == 0 else ""),
-            PVS: make_result(PVS, returncode=lvm_rc, stdout=PVS_OUT if lvm_rc == 0 else ""),
-            LVS: make_result(LVS, returncode=lvm_rc, stdout=LVS_OUT if lvm_rc == 0 else ""),
+            VGS: make_result(VGS, returncode=lvm_rc, stdout=VGS_OUT, stderr=lvm_err),
+            PVS: make_result(PVS, returncode=lvm_rc, stdout=PVS_OUT, stderr=lvm_err),
+            LVS: make_result(LVS, returncode=lvm_rc, stdout=LVS_OUT, stderr=lvm_err),
         }
     )
 

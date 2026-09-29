@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 import pytest
 
@@ -30,26 +31,147 @@ def report(section: str, rows: list[dict[str, str]]) -> str:
 
 
 def runner_for(
-    cmd: tuple[str, ...], stdout: str = "", returncode: int = 0
+    cmd: tuple[str, ...], stdout: str = "", returncode: int = 0, stderr: str = ""
 ) -> FakeCommandRunner:
-    return FakeCommandRunner({cmd: make_result(cmd, returncode=returncode, stdout=stdout)})
+    result = make_result(cmd, returncode=returncode, stdout=stdout, stderr=stderr)
+    return FakeCommandRunner({cmd: result})
 
 
-def vg_runner(stdout: str, returncode: int = 0) -> FakeCommandRunner:
-    return runner_for(VG_CMD, stdout, returncode)
+def vg_runner(stdout: str, returncode: int = 0, stderr: str = "") -> FakeCommandRunner:
+    return runner_for(VG_CMD, stdout, returncode, stderr)
 
 
-def pv_runner(stdout: str, returncode: int = 0) -> FakeCommandRunner:
-    return runner_for(PV_CMD, stdout, returncode)
+def pv_runner(stdout: str, returncode: int = 0, stderr: str = "") -> FakeCommandRunner:
+    return runner_for(PV_CMD, stdout, returncode, stderr)
 
 
-def lv_runner(stdout: str, returncode: int = 0) -> FakeCommandRunner:
-    return runner_for(LV_CMD, stdout, returncode)
+def lv_runner(stdout: str, returncode: int = 0, stderr: str = "") -> FakeCommandRunner:
+    return runner_for(LV_CMD, stdout, returncode, stderr)
 
 
 VG_OK = report("vg", [{"vg_name": "examvg", "vg_extent_size": str(16 * MIB)}])
 PV_OK = report("pv", [{"pv_name": "/dev/sdb1", "vg_name": "examvg"}])
 LV_OK = report("lv", [{"vg_name": "examvg", "lv_name": "datalv", "lv_size": str(1024 * MIB)}])
+
+
+def failure(*messages: str) -> str:
+    """JSON de LVM con solo la lista de log, como en una consulta fallida."""
+    log = [{"log_type": "error", "log_message": m, "log_ret_code": "0"} for m in messages]
+    log.append({"log_type": "status", "log_message": "failure", "log_ret_code": "5"})
+    return json.dumps({"log": log})
+
+
+DENIED = "/dev/mapper/control: open failed: Permission denied"
+
+
+def vg_check(stdout: str, stderr: str = "", rc: int = 5) -> Check:
+    return VolumeGroupExists(vg_runner(stdout, rc, stderr), "examvg")
+
+
+def pv_check(stdout: str, stderr: str = "", rc: int = 5) -> Check:
+    return PhysicalVolumeInGroup(pv_runner(stdout, rc, stderr), "/dev/sdb1", "examvg")
+
+
+def lv_check(stdout: str, stderr: str = "", rc: int = 5) -> Check:
+    return LogicalVolumeExists(lv_runner(stdout, rc, stderr), "examvg", "datalv")
+
+
+def lv_size_check(stdout: str, stderr: str = "", rc: int = 5) -> Check:
+    return LogicalVolumeSizeInRange(lv_runner(stdout, rc, stderr), "examvg", "datalv", 1, 2)
+
+
+# (fabrica del check, mensaje de LVM cuando falta el objeto, texto esperado en el detalle)
+FAILING_CHECKS = [
+    pytest.param(vg_check, 'Volume group "examvg" not found', "'examvg' does not exist", id="vg"),
+    pytest.param(
+        pv_check,
+        'Failed to find physical volume "/dev/sdb1".',
+        "'/dev/sdb1' is not a physical volume",
+        id="pv",
+    ),
+    pytest.param(
+        lv_check,
+        'Failed to find logical volume "examvg/datalv"',
+        "'examvg/datalv' does not exist",
+        id="lv",
+    ),
+    pytest.param(
+        lv_size_check,
+        'Failed to find logical volume "examvg/datalv"',
+        "'examvg/datalv' does not exist",
+        id="lv-size",
+    ),
+]
+
+CheckFactory = Callable[..., Check]
+
+
+@pytest.mark.parametrize(("make", "missing", "expected"), FAILING_CHECKS)
+def test_failed_query_permission_denied_in_log_hints_root(
+    make: CheckFactory, missing: str, expected: str
+) -> None:
+    result = make(failure(DENIED)).run()
+    assert not result.passed
+    assert "exit 5" in result.detail and "sudo" in result.detail
+
+
+@pytest.mark.parametrize(("make", "missing", "expected"), FAILING_CHECKS)
+def test_failed_query_non_root_warning_in_stderr_hints_root(
+    make: CheckFactory, missing: str, expected: str
+) -> None:
+    result = make("", "WARNING: Running as a non-root user.").run()
+    assert "sudo" in result.detail
+
+
+@pytest.mark.parametrize(("make", "missing", "expected"), FAILING_CHECKS)
+def test_failed_query_not_found_in_log_says_missing(
+    make: CheckFactory, missing: str, expected: str
+) -> None:
+    result = make(failure(missing)).run()
+    assert not result.passed
+    assert expected in result.detail and "sudo" not in result.detail
+
+
+@pytest.mark.parametrize(("make", "missing", "expected"), FAILING_CHECKS)
+def test_failed_query_not_found_only_in_stderr_says_missing(
+    make: CheckFactory, missing: str, expected: str
+) -> None:
+    result = make("not json", missing.upper()).run()
+    assert not result.passed
+    assert expected in result.detail and "sudo" not in result.detail
+
+
+@pytest.mark.parametrize(("make", "missing", "expected"), FAILING_CHECKS)
+def test_failed_query_unknown_failure_reports_exit_only(
+    make: CheckFactory, missing: str, expected: str
+) -> None:
+    result = make(failure("something odd happened"), "", 3).run()
+    assert not result.passed
+    assert "exit 3" in result.detail and "sudo" not in result.detail
+    assert "does not exist" not in result.detail
+
+
+@pytest.mark.parametrize(("make", "missing", "expected"), FAILING_CHECKS)
+def test_failed_query_permission_wins_over_not_found(
+    make: CheckFactory, missing: str, expected: str
+) -> None:
+    result = make(failure(missing, DENIED)).run()
+    assert "sudo" in result.detail
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    ["[]", "null", '{"log": "x"}', '{"log": [1, {"log_message": 2}, "x"]}', '{"log": {}}'],
+)
+def test_failed_query_malformed_log_falls_back_to_stderr(stdout: str) -> None:
+    result = vg_check(stdout, 'Volume group "examvg" not found').run()
+    assert "does not exist" in result.detail
+    assert "exit 5" in vg_check(stdout).run().detail
+
+
+def test_failed_query_detail_does_not_embed_log_text() -> None:
+    result = vg_check(failure("weird\x1b[31m text")).run()
+    assert "weird" not in result.detail
 
 
 def test_mib_constant() -> None:
@@ -96,7 +218,7 @@ def test_vg_missing_when_no_rows() -> None:
 
 
 def test_vg_failed_command_hints_root() -> None:
-    result = VolumeGroupExists(vg_runner("", 5), "examvg").run()
+    result = VolumeGroupExists(vg_runner(failure(DENIED), 5), "examvg").run()
     assert not result.passed
     assert "exit 5" in result.detail and "sudo" in result.detail
 
@@ -169,7 +291,7 @@ def test_pv_missing_and_wrong_device() -> None:
 
 
 def test_pv_failed_command_hints_root() -> None:
-    result = PhysicalVolumeInGroup(pv_runner("", 5), "/dev/sdb1", "examvg").run()
+    result = PhysicalVolumeInGroup(pv_runner(failure(DENIED), 5), "/dev/sdb1", "examvg").run()
     assert not result.passed
     assert "exit 5" in result.detail and "sudo" in result.detail
 
@@ -203,7 +325,7 @@ def test_lv_wrong_row_is_ko() -> None:
 
 
 def test_lv_failed_command_hints_root() -> None:
-    result = LogicalVolumeExists(lv_runner("", 5), "examvg", "datalv").run()
+    result = LogicalVolumeExists(lv_runner(failure(DENIED), 5), "examvg", "datalv").run()
     assert not result.passed
     assert "exit 5" in result.detail and "sudo" in result.detail
 
@@ -248,7 +370,7 @@ def test_lv_size_missing_lv() -> None:
 
 
 def test_lv_size_failed_command_hints_root() -> None:
-    check = LogicalVolumeSizeInRange(lv_runner("", 5), "examvg", "datalv", 1, 2)
+    check = LogicalVolumeSizeInRange(lv_runner(failure(DENIED), 5), "examvg", "datalv", 1, 2)
     result = check.run()
     assert not result.passed and "exit 5" in result.detail and "sudo" in result.detail
 

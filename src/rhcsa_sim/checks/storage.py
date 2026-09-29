@@ -54,24 +54,72 @@ def _format_size(value: int) -> str:
     return f"{value} bytes"
 
 
-def _query_failed(what: str, result: CommandResult) -> CheckResult:
-    return CheckResult(
-        False,
-        f"cannot query {what} (exit {result.returncode}); LVM checks require root (run with sudo)",
-    )
+def _log_messages(stdout: str) -> list[str]:
+    """Textos de la lista "log" del JSON de LVM. Vacia si la forma es inesperada."""
+    try:
+        data = json.loads(stdout)
+    except ValueError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    log = data.get("log")
+    if not isinstance(log, list):
+        return []
+    messages: list[str] = []
+    for entry in log:
+        if isinstance(entry, dict):
+            message = entry.get("log_message")
+            if isinstance(message, str):
+                messages.append(message)
+    return messages
+
+
+def _classify_failure(result: CommandResult) -> str:
+    """Devuelve "permission", "missing" o "unknown"; los permisos ganan al not found."""
+    text = "\n".join([*_log_messages(result.stdout), result.stderr]).lower()
+    if "permission denied" in text or "non-root" in text:
+        return "permission"
+    if "not found" in text or "failed to find" in text or "no device found" in text:
+        return "missing"
+    return "unknown"
+
+
+def _query_failed(what: str, missing: str, result: CommandResult) -> CheckResult:
+    kind = _classify_failure(result)
+    if kind == "permission":
+        return CheckResult(
+            False,
+            f"cannot query {what} (exit {result.returncode}); "
+            "LVM checks require root (run with sudo)",
+        )
+    if kind == "missing":
+        return CheckResult(False, missing)
+    return CheckResult(False, f"cannot query {what} (exit {result.returncode})")
 
 
 def _query(
-    runner: CommandRunner, argv: list[str], section: str, what: str
+    runner: CommandRunner, argv: list[str], section: str, what: str, missing: str
 ) -> list[Row] | CheckResult:
     """Ejecuta una consulta LVM; devuelve las filas o un CheckResult KO."""
     result = runner.run(argv)
     if not result.ok:
-        return _query_failed(what, result)
+        return _query_failed(what, missing, result)
     rows = _parse_report(result.stdout, section)
     if rows is None:
         return CheckResult(False, f"unexpected LVM output while querying {what}")
     return rows
+
+
+def _vg_missing(vg: str) -> str:
+    return f"volume group '{vg}' does not exist"
+
+
+def _pv_missing(device: str) -> str:
+    return f"'{device}' is not a physical volume"
+
+
+def _lv_missing(vg: str, lv: str) -> str:
+    return f"logical volume '{vg}/{lv}' does not exist"
 
 
 def _query_vg(runner: CommandRunner, vg: str) -> list[Row] | CheckResult:
@@ -79,12 +127,12 @@ def _query_vg(runner: CommandRunner, vg: str) -> list[Row] | CheckResult:
         "vgs", "--reportformat", "json", "--units", "b", "--nosuffix",
         "-o", "vg_name,vg_extent_size", "--", vg,
     ]  # fmt: skip
-    return _query(runner, argv, "vg", f"volume group '{vg}'")
+    return _query(runner, argv, "vg", f"volume group '{vg}'", _vg_missing(vg))
 
 
 def _query_pv(runner: CommandRunner, device: str) -> list[Row] | CheckResult:
     argv = ["pvs", "--reportformat", "json", "-o", "pv_name,vg_name", "--", device]
-    return _query(runner, argv, "pv", f"physical volume '{device}'")
+    return _query(runner, argv, "pv", f"physical volume '{device}'", _pv_missing(device))
 
 
 def _query_lv(runner: CommandRunner, vg: str, lv: str) -> list[Row] | CheckResult:
@@ -92,7 +140,7 @@ def _query_lv(runner: CommandRunner, vg: str, lv: str) -> list[Row] | CheckResul
         "lvs", "--reportformat", "json", "--units", "b", "--nosuffix",
         "-o", "vg_name,lv_name,lv_size", "--", f"{vg}/{lv}",
     ]  # fmt: skip
-    return _query(runner, argv, "lv", f"logical volume '{vg}/{lv}'")
+    return _query(runner, argv, "lv", f"logical volume '{vg}/{lv}'", _lv_missing(vg, lv))
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +164,7 @@ class VolumeGroupExists:
         if isinstance(rows, CheckResult):
             return rows
         if not rows or rows[0].get("vg_name") != self.name:
-            return CheckResult(False, f"volume group '{self.name}' does not exist")
+            return CheckResult(False, _vg_missing(self.name))
         if self.extent_size is None:
             return CheckResult(True, f"volume group '{self.name}' exists")
         actual = _parse_bytes(rows[0].get("vg_extent_size", ""))
@@ -148,7 +196,7 @@ class PhysicalVolumeInGroup:
         if isinstance(rows, CheckResult):
             return rows
         if not rows or rows[0].get("pv_name") != self.device:
-            return CheckResult(False, f"'{self.device}' is not a physical volume")
+            return CheckResult(False, _pv_missing(self.device))
         actual = rows[0].get("vg_name", "")
         if not actual:
             return CheckResult(False, f"'{self.device}' is not in any volume group")
@@ -175,7 +223,7 @@ class LogicalVolumeExists:
         if isinstance(rows, CheckResult):
             return rows
         if not rows or rows[0].get("lv_name") != self.lv:
-            return CheckResult(False, f"logical volume '{self.vg}/{self.lv}' does not exist")
+            return CheckResult(False, _lv_missing(self.vg, self.lv))
         return CheckResult(True, f"logical volume '{self.vg}/{self.lv}' exists")
 
 
@@ -202,7 +250,7 @@ class LogicalVolumeSizeInRange:
         if isinstance(rows, CheckResult):
             return rows
         if not rows or rows[0].get("lv_name") != self.lv:
-            return CheckResult(False, f"logical volume '{self.vg}/{self.lv}' does not exist")
+            return CheckResult(False, _lv_missing(self.vg, self.lv))
         size = _parse_bytes(rows[0].get("lv_size", ""))
         if size is None:
             return CheckResult(False, "unexpected logical volume size in LVM output")
