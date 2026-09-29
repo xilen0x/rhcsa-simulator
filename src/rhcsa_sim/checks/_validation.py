@@ -17,6 +17,7 @@ _UNIT_NAME_RE = re.compile(
 )
 _ZONE_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,16}")
 _FIREWALL_SERVICE_RE = re.compile(r"[a-z0-9][a-z0-9_.+-]{0,63}")
+_SSHD_KEYWORD_RE = re.compile(r"[a-z][a-z0-9]{0,63}")
 _SELINUX_NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,127}")
 _HOSTNAME_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _PROTOCOLS = frozenset({"tcp", "udp", "sctp", "dccp"})
@@ -154,4 +155,11 @@ def validate_hostname(name: str) -> str:
         _HOSTNAME_LABEL_RE.fullmatch(label) for label in name.split(".")
     ):
         raise ValueError(f"invalid hostname: {name!r}")
+    return name
+
+
+def validate_sshd_keyword(name: str) -> str:
+    """Keyword de sshd -T: minusculas y digitos, tal como las imprime sshd."""
+    if not _SSHD_KEYWORD_RE.fullmatch(name):
+        raise ValueError(f"invalid sshd keyword: {name!r}")
     return name
