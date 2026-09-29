@@ -111,6 +111,11 @@ SHOW_ATD = (
 )  # fmt: skip
 CRON_ALICE = ("crontab", "-l", "-u", "alice")
 TUNED = ("tuned-adm", "active")
+SCRIPT = "/usr/local/bin/sysinfo.sh"
+SCRIPT_STAT = ("stat", "-c", "%a %F", "--", SCRIPT)
+SCRIPT_HEAD = ("head", "-n", "1", "--", SCRIPT)
+SCRIPT_SYNTAX = ("bash", "-n", "--", SCRIPT)
+SYSINFO_GREP = ("grep", "-Fxq", "--", HOSTNAME, "/root/sysinfo.txt")
 CRON_OUT = "MAILTO=root\n30 14 * * * /usr/bin/date\n"
 ACL_OUT = "user::rwx\nuser:alice:rwx\ngroup::r-x\nmask::rwx\nother::---\n"
 
@@ -136,6 +141,7 @@ def make_runner(
     permit_root_login: str = "no",
     repo_status: str = "disabled",
     tuned_profile: str = "virtual-guest",
+    script_rc: int = 0,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -169,6 +175,8 @@ def make_runner(
     )
     # sin root, crontab -u dice "must be privileged"
     cron_err = "must be privileged to use -u\n" if root_rc else ""
+    # script ausente: stat/bash -n/head fallan; grep sale con 2 (fichero inexistente)
+    script_out = "755 regular file\n" if script_rc == 0 else ""
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
@@ -219,6 +227,12 @@ def make_runner(
             TUNED: make_result(
                 TUNED, stdout=f"Current active profile: {tuned_profile}\n"
             ),
+            SCRIPT_STAT: make_result(SCRIPT_STAT, returncode=script_rc, stdout=script_out),
+            SCRIPT_HEAD: make_result(
+                SCRIPT_HEAD, returncode=script_rc, stdout="#!/bin/bash\n" if script_rc == 0 else ""
+            ),
+            SCRIPT_SYNTAX: make_result(SCRIPT_SYNTAX, returncode=127 if script_rc else 0),
+            SYSINFO_GREP: make_result(SYSINFO_GREP, returncode=2 if script_rc else 0),
             SESTATUS: make_result(SESTATUS, stdout=sestatus_out),
             SE_RULE: make_result(SE_RULE, stdout=SE_CONTEXT),
             SE_STAT: make_result(SE_STAT, stdout=SE_CONTEXT),
@@ -264,17 +278,17 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "250/250" in out and "PASS" in out
+    assert "260/260" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
         group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
-        net_method="auto", running_hostname="localhost", root_rc=1,
+        net_method="auto", running_hostname="localhost", root_rc=1, script_rc=1,
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "60/250" in out and "FAIL" in out
+    assert "60/260" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -375,6 +389,13 @@ def test_check_maintenance_tasks_ok_and_ko() -> None:
     assert code == 1 and "[KO] dnf-01" in out and "enabled" in out
     code, out, _ = run_cli(["check", "cron-01"], make_runner(root_rc=1))
     assert code == 1 and "[KO] cron-01" in out and "sudo" in out
+
+
+def test_check_script_task_ok_and_ko() -> None:
+    code, out, _ = run_cli(["check", "scr-01"], make_runner())
+    assert code == 0 and "[OK] scr-01" in out
+    code, out, _ = run_cli(["check", "scr-01"], make_runner(script_rc=1))
+    assert code == 1 and "[KO] scr-01" in out and "cannot stat" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:

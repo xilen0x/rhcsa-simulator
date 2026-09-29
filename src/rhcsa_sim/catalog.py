@@ -18,6 +18,12 @@ from rhcsa_sim.checks.network import (
     ConnectionStaticIpv4,
     HostnameIs,
 )
+from rhcsa_sim.checks.scripts import (
+    FileContainsLine,
+    FileIsExecutable,
+    ScriptHasShebang,
+    ScriptSyntaxValid,
+)
 from rhcsa_sim.checks.security import SshdOptionIs, SudoersValid, UserHasSudoRule
 from rhcsa_sim.checks.selinux import (
     PathHasSelinuxType,
@@ -312,6 +318,22 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(TunedProfileIs(runner, "virtual-guest"),),
+            ),
+            Task(
+                id="scr-01",
+                block=ObjectiveBlock.SHELL_SCRIPTS,
+                description=(
+                    "Crea el script ejecutable /usr/local/bin/sysinfo.sh (bash) que escriba el "
+                    "hostname del sistema en la primera linea de /root/sysinfo.txt, y ejecutalo "
+                    "una vez (el hostname configurado en net-02: servera.lab.example.com)."
+                ),
+                points=10,
+                checks=(
+                    FileIsExecutable(runner, "/usr/local/bin/sysinfo.sh"),
+                    ScriptHasShebang(runner, "/usr/local/bin/sysinfo.sh", "/bin/bash"),
+                    ScriptSyntaxValid(runner, "/usr/local/bin/sysinfo.sh"),
+                    FileContainsLine(runner, "/root/sysinfo.txt", "servera.lab.example.com"),
+                ),
             ),
         ]
     )
