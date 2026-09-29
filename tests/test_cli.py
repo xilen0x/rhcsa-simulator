@@ -95,6 +95,15 @@ SEMANAGE_PORT_OUT = (
     "http_port_t                    tcp      80, 81, 82, 443, 488, 8008, 8009, 8443, 9000\n"
 )
 SEMANAGE_ROOT_ERR = "ValueError: SELinux policy is not managed or store cannot be accessed.\n"
+SSHD = ("sshd", "-T")
+VISUDO = ("visudo", "-c")
+SUDO_L = ("sudo", "-n", "-l", "-U", "alice")
+SSHD_OUT = "port 22\npermitrootlogin no\npasswordauthentication yes\n"
+VISUDO_OUT = "/etc/sudoers: parsed OK\n/etc/sudoers.d/alice: parsed OK\n"
+SUDO_L_OUT = (
+    "Matching Defaults entries for alice on localhost:\n    !visiblepw\n\n"
+    "User alice may run the following commands on localhost:\n    (ALL) NOPASSWD: ALL\n"
+)
 ACL_OUT = "user::rwx\nuser:alice:rwx\ngroup::r-x\nmask::rwx\nother::---\n"
 
 
@@ -115,6 +124,8 @@ def make_runner(
     blockdev_rc: int = 0,
     net_method: str = "manual",
     running_hostname: str = HOSTNAME,
+    root_rc: int = 0,
+    permit_root_login: str = "no",
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -136,6 +147,11 @@ def make_runner(
         f"ipv4.method:{net_method}\nipv4.addresses:192.168.122.50/24\n"
         "ipv4.gateway:192.168.122.1\nipv4.dns:192.168.122.1\n"
     )
+    # sin root, sshd/visudo dicen "Permission denied" y sudo -n pide contrasena
+    sshd_err = "/etc/ssh/sshd_config: Permission denied\n" if root_rc else ""
+    visudo_err = "visudo: unable to open /etc/sudoers: Permission denied\n" if root_rc else ""
+    sudo_err = "sudo: a password is required\n" if root_rc else ""
+    sshd_out = SSHD_OUT.replace("permitrootlogin no", f"permitrootlogin {permit_root_login}")
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
@@ -164,6 +180,18 @@ def make_runner(
             NMCLI: make_result(NMCLI, stdout=nmcli_out),
             HOSTNAME_STATIC: make_result(HOSTNAME_STATIC, stdout=f"{HOSTNAME}\n"),
             HOSTNAME_RUNTIME: make_result(HOSTNAME_RUNTIME, stdout=f"{running_hostname}\n"),
+            SSHD: make_result(
+                SSHD, returncode=255 if root_rc else 0, stderr=sshd_err,
+                stdout="" if root_rc else sshd_out,
+            ),
+            VISUDO: make_result(
+                VISUDO, returncode=root_rc, stderr=visudo_err,
+                stdout="" if root_rc else VISUDO_OUT,
+            ),
+            SUDO_L: make_result(
+                SUDO_L, returncode=root_rc, stderr=sudo_err,
+                stdout="" if root_rc else SUDO_L_OUT,
+            ),
             SESTATUS: make_result(SESTATUS, stdout=sestatus_out),
             SE_RULE: make_result(SE_RULE, stdout=SE_CONTEXT),
             SE_STAT: make_result(SE_STAT, stdout=SE_CONTEXT),
@@ -209,17 +237,17 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "190/190" in out and "PASS" in out
+    assert "210/210" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
         group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
-        net_method="auto", running_hostname="localhost",
+        net_method="auto", running_hostname="localhost", root_rc=1,
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "40/190" in out and "FAIL" in out
+    assert "40/210" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -294,6 +322,19 @@ def test_check_selinux_tasks_ok_and_ko() -> None:
     assert "permissive" in out and "enforcing" in out
     code, out, _ = run_cli(["check", "se-03"], make_runner(semanage_rc=1))
     assert code == 1 and "[KO] se-03" in out and "sudo" in out
+
+
+def test_check_security_tasks_ok_and_ko() -> None:
+    for task_id in ("sec-01", "sec-02"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+    code, out, _ = run_cli(["check", "sec-01"], make_runner(permit_root_login="yes"))
+    assert code == 1 and "[KO] sec-01" in out
+    assert "permitrootlogin is yes, expected no" in out
+    code, out, _ = run_cli(["check", "sec-01"], make_runner(root_rc=1))
+    assert code == 1 and "[KO] sec-01" in out and "sudo" in out
+    code, out, _ = run_cli(["check", "sec-02"], make_runner(root_rc=1))
+    assert code == 1 and "[KO] sec-02" in out and "requires root" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:

@@ -12,6 +12,7 @@ from rhcsa_sim.checks.network import (
     ConnectionStaticIpv4,
     HostnameIs,
 )
+from rhcsa_sim.checks.security import SshdOptionIs, SudoersValid, UserHasSudoRule
 from rhcsa_sim.checks.selinux import (
     PathHasSelinuxType,
     SelinuxBooleanIs,
@@ -243,6 +244,26 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(SelinuxPortType(runner, 82, "tcp", "http_port_t"),),
+            ),
+            Task(
+                id="sec-01",
+                block=ObjectiveBlock.SECURITY,
+                description="Deshabilita el acceso SSH directo del usuario root (PermitRootLogin no).",
+                points=10,
+                checks=(SshdOptionIs(runner, "permitrootlogin", "no"),),
+            ),
+            Task(
+                id="sec-02",
+                block=ObjectiveBlock.SECURITY,
+                description=(
+                    "Permite al usuario alice ejecutar cualquier comando con sudo "
+                    "sin contrasena mediante un archivo en /etc/sudoers.d."
+                ),
+                points=10,
+                checks=(
+                    SudoersValid(runner),
+                    UserHasSudoRule(runner, "alice", "ALL", nopasswd=True),
+                ),
             ),
         ]
     )
