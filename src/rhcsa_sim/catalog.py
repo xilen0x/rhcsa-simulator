@@ -4,6 +4,12 @@ from rhcsa_sim.checks.acl import PathHasAclEntry
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
+from rhcsa_sim.checks.selinux import (
+    PathHasSelinuxType,
+    SelinuxBooleanIs,
+    SelinuxMode,
+    SelinuxPortType,
+)
 from rhcsa_sim.checks.services import DefaultTarget, UnitActiveStateIs, UnitFileStateIs
 from rhcsa_sim.checks.storage import (
     MIB,
@@ -149,6 +155,43 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(FirewallPortAllowed(runner, "public", 8080, "tcp"),),
+            ),
+            Task(
+                id="se-01",
+                block=ObjectiveBlock.SECURITY,
+                description=(
+                    "Configura SELinux en modo enforcing, en ejecucion y de forma persistente."
+                ),
+                points=10,
+                checks=(SelinuxMode(runner, "enforcing"),),
+            ),
+            Task(
+                id="se-02",
+                block=ObjectiveBlock.SECURITY,
+                description=(
+                    "Crea el directorio /srv/web y asigna de forma persistente "
+                    "el tipo SELinux httpd_sys_content_t a su contenido."
+                ),
+                points=10,
+                checks=(PathHasSelinuxType(runner, "/srv/web", "httpd_sys_content_t"),),
+            ),
+            Task(
+                id="se-03",
+                block=ObjectiveBlock.SECURITY,
+                description=(
+                    "Activa de forma persistente el boolean SELinux httpd_can_network_connect."
+                ),
+                points=10,
+                checks=(SelinuxBooleanIs(runner, "httpd_can_network_connect", True),),
+            ),
+            Task(
+                id="se-04",
+                block=ObjectiveBlock.SECURITY,
+                description=(
+                    "Permite que httpd escuche en el puerto 82/tcp etiquetandolo como http_port_t."
+                ),
+                points=10,
+                checks=(SelinuxPortType(runner, 82, "tcp", "http_port_t"),),
             ),
         ]
     )

@@ -51,6 +51,22 @@ FW_SVC_PERM = ("firewall-cmd", "--permanent", "--zone=public", "--query-service=
 FW_SVC_RUN = ("firewall-cmd", "--zone=public", "--query-service=http")
 FW_PORT_PERM = ("firewall-cmd", "--permanent", "--zone=public", "--query-port=8080/tcp")
 FW_PORT_RUN = ("firewall-cmd", "--zone=public", "--query-port=8080/tcp")
+SESTATUS = ("sestatus",)
+SE_STAT = ("stat", "-c", "%C", "--", "/srv/web")
+SE_RULE = ("matchpathcon", "-n", "--", "/srv/web")
+GETSEBOOL = ("getsebool", "--", "httpd_can_network_connect")
+SEMANAGE_BOOL = ("semanage", "boolean", "-l")
+SEMANAGE_PORT = ("semanage", "port", "-l")
+SE_CONTEXT = "system_u:object_r:httpd_sys_content_t:s0\n"
+SEMANAGE_BOOL_OUT = (
+    "SELinux boolean                State  Default Description\n\n"
+    "httpd_can_network_connect      (on   ,   on)  Allow httpd to can network connect\n"
+)
+SEMANAGE_PORT_OUT = (
+    "SELinux Port Type              Proto    Port Number\n\n"
+    "http_port_t                    tcp      80, 81, 82, 443, 488, 8008, 8009, 8443, 9000\n"
+)
+SEMANAGE_ROOT_ERR = "ValueError: SELinux policy is not managed or store cannot be accessed.\n"
 ACL_OUT = "user::rwx\nuser:alice:rwx\ngroup::r-x\nmask::rwx\nother::---\n"
 
 
@@ -66,6 +82,8 @@ def make_runner(
     svc_rc: int = 0,
     default_target: str = "multi-user.target",
     fw_rc: int = 0,
+    selinux_mode: str = "enforcing",
+    semanage_rc: int = 0,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -73,6 +91,13 @@ def make_runner(
     mount_out = MOUNT_OUT.replace(DEVICE, mount_device)
     show_out = SHOW_OUT if svc_rc == 0 else ""
     fw_out = "yes\n" if fw_rc == 0 else ""
+    sestatus_out = (
+        "SELinux status:                 enabled\n"
+        f"Current mode:                   {selinux_mode}\n"
+        f"Mode from config file:          {selinux_mode}\n"
+    )
+    # sin root, semanage falla con rc 1 y un ValueError sobre el store de politica
+    semanage_err = SEMANAGE_ROOT_ERR if semanage_rc == 1 else ""
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
@@ -95,6 +120,18 @@ def make_runner(
             FW_SVC_RUN: make_result(FW_SVC_RUN, returncode=fw_rc, stdout=fw_out),
             FW_PORT_PERM: make_result(FW_PORT_PERM, returncode=fw_rc, stdout=fw_out),
             FW_PORT_RUN: make_result(FW_PORT_RUN, returncode=fw_rc, stdout=fw_out),
+            SESTATUS: make_result(SESTATUS, stdout=sestatus_out),
+            SE_RULE: make_result(SE_RULE, stdout=SE_CONTEXT),
+            SE_STAT: make_result(SE_STAT, stdout=SE_CONTEXT),
+            GETSEBOOL: make_result(GETSEBOOL, stdout="httpd_can_network_connect --> on\n"),
+            SEMANAGE_BOOL: make_result(
+                SEMANAGE_BOOL, returncode=semanage_rc, stderr=semanage_err,
+                stdout=SEMANAGE_BOOL_OUT if semanage_rc == 0 else "",
+            ),
+            SEMANAGE_PORT: make_result(
+                SEMANAGE_PORT, returncode=semanage_rc, stderr=semanage_err,
+                stdout=SEMANAGE_PORT_OUT if semanage_rc == 0 else "",
+            ),
         }
     )
 
@@ -128,14 +165,14 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "110/110" in out and "PASS" in out
+    assert "150/150" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
-    runner = make_runner(group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253)
+    runner = make_runner(group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1)
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "20/110" in out and "FAIL" in out
+    assert "40/150" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -178,6 +215,17 @@ def test_check_firewall_tasks_ok_and_ko() -> None:
     assert code == 0 and "[OK] fw-02" in out
     code, out, _ = run_cli(["check", "fw-01"], make_runner(fw_rc=253))
     assert code == 1 and "[KO] fw-01" in out and "sudo" in out
+
+
+def test_check_selinux_tasks_ok_and_ko() -> None:
+    for task_id in ("se-01", "se-02", "se-03", "se-04"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+    code, out, _ = run_cli(["check", "se-01"], make_runner(selinux_mode="permissive"))
+    assert code == 1 and "[KO] se-01" in out
+    assert "permissive" in out and "enforcing" in out
+    code, out, _ = run_cli(["check", "se-03"], make_runner(semanage_rc=1))
+    assert code == 1 and "[KO] se-03" in out and "sudo" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:
