@@ -51,6 +51,14 @@ FW_SVC_PERM = ("firewall-cmd", "--permanent", "--zone=public", "--query-service=
 FW_SVC_RUN = ("firewall-cmd", "--zone=public", "--query-service=http")
 FW_PORT_PERM = ("firewall-cmd", "--permanent", "--zone=public", "--query-port=8080/tcp")
 FW_PORT_RUN = ("firewall-cmd", "--zone=public", "--query-port=8080/tcp")
+NMCLI = (
+    "nmcli", "-t", "-f",
+    "connection.id,connection.autoconnect,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns",
+    "connection", "show", "id", "exam-static",
+)  # fmt: skip
+HOSTNAME_STATIC = ("hostnamectl", "hostname", "--static")
+HOSTNAME_RUNTIME = ("hostname",)
+HOSTNAME = "servera.lab.example.com"
 MIB = 1024 * 1024
 SWAP_UUID = "995e11a3-0000-45fe-a368-d4b5f25a5ee1"
 LSBLK_SDB2 = (
@@ -105,6 +113,8 @@ def make_runner(
     selinux_mode: str = "enforcing",
     semanage_rc: int = 0,
     blockdev_rc: int = 0,
+    net_method: str = "manual",
+    running_hostname: str = HOSTNAME,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -121,6 +131,11 @@ def make_runner(
     semanage_err = SEMANAGE_ROOT_ERR if semanage_rc == 1 else ""
     # rc 32 = lsblk no encuentra el dispositivo
     lsblk_out = LSBLK_SDB2_OUT if blockdev_rc == 0 else ""
+    nmcli_out = (
+        "connection.id:exam-static\nconnection.autoconnect:yes\n"
+        f"ipv4.method:{net_method}\nipv4.addresses:192.168.122.50/24\n"
+        "ipv4.gateway:192.168.122.1\nipv4.dns:192.168.122.1\n"
+    )
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
@@ -146,6 +161,9 @@ def make_runner(
             FW_SVC_RUN: make_result(FW_SVC_RUN, returncode=fw_rc, stdout=fw_out),
             FW_PORT_PERM: make_result(FW_PORT_PERM, returncode=fw_rc, stdout=fw_out),
             FW_PORT_RUN: make_result(FW_PORT_RUN, returncode=fw_rc, stdout=fw_out),
+            NMCLI: make_result(NMCLI, stdout=nmcli_out),
+            HOSTNAME_STATIC: make_result(HOSTNAME_STATIC, stdout=f"{HOSTNAME}\n"),
+            HOSTNAME_RUNTIME: make_result(HOSTNAME_RUNTIME, stdout=f"{running_hostname}\n"),
             SESTATUS: make_result(SESTATUS, stdout=sestatus_out),
             SE_RULE: make_result(SE_RULE, stdout=SE_CONTEXT),
             SE_STAT: make_result(SE_STAT, stdout=SE_CONTEXT),
@@ -191,16 +209,17 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "170/170" in out and "PASS" in out
+    assert "190/190" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
-        group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32
+        group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
+        net_method="auto", running_hostname="localhost",
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "40/170" in out and "FAIL" in out
+    assert "40/190" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -252,6 +271,18 @@ def test_check_firewall_tasks_ok_and_ko() -> None:
     assert code == 0 and "[OK] fw-02" in out
     code, out, _ = run_cli(["check", "fw-01"], make_runner(fw_rc=253))
     assert code == 1 and "[KO] fw-01" in out and "sudo" in out
+
+
+def test_check_networking_tasks_ok_and_ko() -> None:
+    for task_id in ("net-01", "net-02"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+    code, out, _ = run_cli(["check", "net-01"], make_runner(net_method="auto"))
+    assert code == 1 and "[KO] net-01" in out
+    assert "ipv4.method is auto, expected manual" in out
+    code, out, _ = run_cli(["check", "net-02"], make_runner(running_hostname="localhost"))
+    assert code == 1 and "[KO] net-02" in out
+    assert "running hostname is localhost" in out
 
 
 def test_check_selinux_tasks_ok_and_ko() -> None:

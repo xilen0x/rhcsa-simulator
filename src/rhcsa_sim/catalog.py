@@ -6,6 +6,12 @@ from rhcsa_sim.checks.blockdev import PartitionExists, SwapActive, SwapInFstabBy
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
+from rhcsa_sim.checks.network import (
+    ConnectionAutoconnect,
+    ConnectionHasDns,
+    ConnectionStaticIpv4,
+    HostnameIs,
+)
 from rhcsa_sim.checks.selinux import (
     PathHasSelinuxType,
     SelinuxBooleanIs,
@@ -176,6 +182,30 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(FirewallPortAllowed(runner, "public", 8080, "tcp"),),
+            ),
+            Task(
+                id="net-01",
+                block=ObjectiveBlock.NETWORKING,
+                description=(
+                    "Configura el perfil de conexion 'exam-static' con IPv4 estatica "
+                    "192.168.122.50/24, gateway 192.168.122.1, DNS 192.168.122.1 "
+                    "y activacion automatica al arranque."
+                ),
+                points=10,
+                checks=(
+                    ConnectionStaticIpv4(
+                        runner, "exam-static", "192.168.122.50/24", "192.168.122.1"
+                    ),
+                    ConnectionHasDns(runner, "exam-static", ("192.168.122.1",)),
+                    ConnectionAutoconnect(runner, "exam-static"),
+                ),
+            ),
+            Task(
+                id="net-02",
+                block=ObjectiveBlock.NETWORKING,
+                description="Configura de forma persistente el hostname servera.lab.example.com.",
+                points=10,
+                checks=(HostnameIs(runner, "servera.lab.example.com"),),
             ),
             Task(
                 id="se-01",
