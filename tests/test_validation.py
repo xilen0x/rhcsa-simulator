@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import ipaddress
+
 import pytest
 
 from rhcsa_sim.checks._validation import (
     validate_acl_entry,
     validate_block_device,
+    validate_connection_name,
     validate_fstype,
     validate_firewall_service,
+    validate_hostname,
+    validate_ipv4_address,
+    validate_ipv4_interface,
     validate_lvm_name,
     validate_port,
     validate_protocol,
@@ -254,3 +260,58 @@ def test_valid_selinux_booleans(name: str) -> None:
 def test_invalid_selinux_booleans(name: str) -> None:
     with pytest.raises(ValueError):
         validate_selinux_boolean(name)
+
+
+@pytest.mark.parametrize("name", ["exam-static", "a", "Wired connection 1", "ens3", "a" * 64])
+def test_valid_connection_names(name: str) -> None:
+    assert validate_connection_name(name) == name
+
+
+@pytest.mark.parametrize(
+    "name", ["", "-x", " a", "a ", "a\nb", "a\x00b", "a\tb", "a\x1bb", "a" * 65, "a\x7fb"]
+)
+def test_invalid_connection_names(name: str) -> None:
+    with pytest.raises(ValueError):
+        validate_connection_name(name)
+
+
+def test_valid_ipv4_interface_is_normalized() -> None:
+    iface = validate_ipv4_interface("192.168.122.50/24")
+    assert iface == ipaddress.IPv4Interface("192.168.122.50/24")
+    assert validate_ipv4_interface("10.0.0.5/255.0.0.0") == ipaddress.IPv4Interface("10.0.0.5/8")
+
+
+@pytest.mark.parametrize(
+    "text", ["", "192.168.122.50", "192.168.122.50/33", "300.1.1.1/24", "::1/64", "a/24", " 1.1.1.1/24"]
+)
+def test_invalid_ipv4_interfaces(text: str) -> None:
+    with pytest.raises(ValueError):
+        validate_ipv4_interface(text)
+
+
+def test_valid_ipv4_address() -> None:
+    assert validate_ipv4_address("192.168.122.1") == ipaddress.IPv4Address("192.168.122.1")
+
+
+@pytest.mark.parametrize("text", ["", "1.1.1", "1.1.1.1/24", "::1", "256.1.1.1", "1.1.1.1 ", "x"])
+def test_invalid_ipv4_addresses(text: str) -> None:
+    with pytest.raises(ValueError):
+        validate_ipv4_address(text)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["servera.lab.example.com", "localhost", "a", "a-b.c1", "a" * 63, ".".join(["a" * 63] * 3 + ["b" * 61])],
+)
+def test_valid_hostnames(name: str) -> None:
+    assert validate_hostname(name) == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["", "A.example.com", "-a", "a-", "a..b", ".a", "a.", "a_b", "a b", "a\n", "a" * 64,
+     ".".join(["a" * 63] * 4)],
+)  # fmt: skip
+def test_invalid_hostnames(name: str) -> None:
+    with pytest.raises(ValueError):
+        validate_hostname(name)

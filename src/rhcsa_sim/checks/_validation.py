@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import re
 
 _ACCOUNT_NAME_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
@@ -17,6 +18,7 @@ _UNIT_NAME_RE = re.compile(
 _ZONE_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,16}")
 _FIREWALL_SERVICE_RE = re.compile(r"[a-z0-9][a-z0-9_.+-]{0,63}")
 _SELINUX_NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,127}")
+_HOSTNAME_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _PROTOCOLS = frozenset({"tcp", "udp", "sctp", "dccp"})
 _ACL_PERMS = r"[r-][w-][x-]"
 _ACL_ENTRY_RE = re.compile(
@@ -113,4 +115,43 @@ def validate_selinux_type(name: str) -> str:
 def validate_selinux_boolean(name: str) -> str:
     if not _SELINUX_NAME_RE.fullmatch(name):
         raise ValueError(f"invalid SELinux boolean: {name!r}")
+    return name
+
+
+def validate_connection_name(name: str) -> str:
+    """Nombre de perfil NetworkManager: 1-64 caracteres imprimibles, sin '-' inicial
+    ni espacios en los extremos."""
+    if (
+        not 1 <= len(name) <= 64
+        or not name.isprintable()
+        or name.startswith("-")
+        or name != name.strip()
+    ):
+        raise ValueError(f"invalid connection name: {name!r}")
+    return name
+
+
+def validate_ipv4_interface(text: str) -> ipaddress.IPv4Interface:
+    """Direccion IPv4 con prefijo obligatorio (a.b.c.d/n), normalizada."""
+    if "/" not in text:
+        raise ValueError(f"IPv4 address needs a /prefix: {text!r}")
+    try:
+        return ipaddress.IPv4Interface(text)
+    except ValueError:
+        raise ValueError(f"invalid IPv4 interface: {text!r}") from None
+
+
+def validate_ipv4_address(text: str) -> ipaddress.IPv4Address:
+    try:
+        return ipaddress.IPv4Address(text)
+    except ValueError:
+        raise ValueError(f"invalid IPv4 address: {text!r}") from None
+
+
+def validate_hostname(name: str) -> str:
+    """Hostname tipo FQDN en minusculas: etiquetas de 1-63 caracteres, total <= 253."""
+    if len(name) > 253 or not all(
+        _HOSTNAME_LABEL_RE.fullmatch(label) for label in name.split(".")
+    ):
+        raise ValueError(f"invalid hostname: {name!r}")
     return name
