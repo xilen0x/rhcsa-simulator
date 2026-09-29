@@ -10,6 +10,10 @@ _UUID_RE = re.compile(
     r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
     r"|[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}"
 )
+_UNIT_NAME_RE = re.compile(
+    r"[A-Za-z0-9:_@][A-Za-z0-9:_.@-]{0,249}"
+    r"\.(?:service|socket|timer|target|mount|path|automount|swap)"
+)
 _ACL_PERMS = r"[r-][w-][x-]"
 _ACL_ENTRY_RE = re.compile(
     rf"(?:default:)?(?:(?:user|group):(?:[a-z_][a-z0-9_-]{{0,31}})?|(?:mask|other):):"
@@ -60,3 +64,10 @@ def validate_acl_entry(entry: str) -> str:
     if not _ACL_ENTRY_RE.fullmatch(entry):
         raise ValueError(f"invalid ACL entry: {entry!r}")
     return entry
+
+
+def validate_unit_name(name: str) -> str:
+    """Nombre de unidad systemd con sufijo conocido; sin '-' ni '.' inicial."""
+    if not _UNIT_NAME_RE.fullmatch(name):
+        raise ValueError(f"invalid systemd unit name: {name!r}")
+    return name

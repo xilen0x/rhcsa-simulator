@@ -7,6 +7,7 @@ from rhcsa_sim.checks._validation import (
     validate_block_device,
     validate_fstype,
     validate_lvm_name,
+    validate_unit_name,
     validate_uuid,
 )
 
@@ -134,3 +135,44 @@ def test_valid_acl_entries(entry: str) -> None:
 def test_invalid_acl_entries(entry: str) -> None:
     with pytest.raises(ValueError):
         validate_acl_entry(entry)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "sshd.service",
+        "getty@tty1.service",
+        "fstrim.timer",
+        "multi-user.target",
+        "systemd-fsck@dev-sda1.service",
+        "data.mount",
+        "a.b.socket",
+    ],
+)
+def test_valid_unit_names(name: str) -> None:
+    assert validate_unit_name(name) == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "sshd",
+        "-x.service",
+        ".x.service",
+        "a b.service",
+        "x;y.service",
+        "../x.service",
+        "a/b.service",
+        "a\\b.service",
+        "x.conf",
+        ".service",
+        "..service",
+        "x.service\n",
+        "x.service\x00",
+        "a" * 251 + ".service",
+    ],
+)
+def test_invalid_unit_names(name: str) -> None:
+    with pytest.raises(ValueError):
+        validate_unit_name(name)
