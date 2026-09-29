@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
+from rhcsa_sim.checks.storage import (
+    MIB,
+    LogicalVolumeExists,
+    LogicalVolumeSizeInRange,
+    PhysicalVolumeInGroup,
+    VolumeGroupExists,
+)
 from rhcsa_sim.checks.users import (
     GroupExists,
     UserExists,
@@ -49,6 +56,32 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 checks=(
                     PathHasOwner(runner, "/srv/shared", "root", "devs"),
                     PathHasMode(runner, "/srv/shared", "2770"),
+                ),
+            ),
+            Task(
+                id="storage-01",
+                block=ObjectiveBlock.LOCAL_STORAGE,
+                description=(
+                    "Crea el grupo de volumenes 'examvg' sobre /dev/sdb1 "
+                    "con un tamano de extent de 16 MiB."
+                ),
+                points=10,
+                checks=(
+                    PhysicalVolumeInGroup(runner, "/dev/sdb1", "examvg"),
+                    VolumeGroupExists(runner, "examvg", 16 * MIB),
+                ),
+            ),
+            Task(
+                id="storage-02",
+                block=ObjectiveBlock.LOCAL_STORAGE,
+                description=(
+                    "Crea el volumen logico 'datalv' en 'examvg' "
+                    "con un tamano entre 960 MiB y 1088 MiB."
+                ),
+                points=10,
+                checks=(
+                    LogicalVolumeExists(runner, "examvg", "datalv"),
+                    LogicalVolumeSizeInRange(runner, "examvg", "datalv", 960 * MIB, 1088 * MIB),
                 ),
             ),
         ]

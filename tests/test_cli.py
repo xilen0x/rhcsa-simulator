@@ -12,9 +12,24 @@ GROUP = ("getent", "group", "devs")
 PASSWD = ("getent", "passwd", "alice")
 IDG = ("id", "-Gn", "--", "alice")
 STAT = ("stat", "-c", "%a %U %G", "--", "/srv/shared")
+VGS = (
+    "vgs", "--reportformat", "json", "--units", "b", "--nosuffix",
+    "-o", "vg_name,vg_extent_size", "--", "examvg",
+)  # fmt: skip
+PVS = ("pvs", "--reportformat", "json", "-o", "pv_name,vg_name", "--", "/dev/sdb1")
+LVS = (
+    "lvs", "--reportformat", "json", "--units", "b", "--nosuffix",
+    "-o", "vg_name,lv_name,lv_size", "--", "examvg/datalv",
+)  # fmt: skip
+VGS_OUT = '{"report": [{"vg": [{"vg_name": "examvg", "vg_extent_size": "16777216"}]}]}'
+PVS_OUT = '{"report": [{"pv": [{"pv_name": "/dev/sdb1", "vg_name": "examvg"}]}]}'
+LVS_OUT = (
+    '{"report": [{"lv": [{"vg_name": "examvg", "lv_name": "datalv", '
+    '"lv_size": "1073741824"}]}]}'
+)
 
 
-def make_runner(group_rc: int = 0) -> FakeCommandRunner:
+def make_runner(group_rc: int = 0, lvm_rc: int = 0) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     return FakeCommandRunner(
         {
@@ -22,6 +37,9 @@ def make_runner(group_rc: int = 0) -> FakeCommandRunner:
             PASSWD: make_result(PASSWD, stdout="alice:x:1234:1234:A:/home/alice:/bin/bash\n"),
             IDG: make_result(IDG, stdout="alice devs\n"),
             STAT: make_result(STAT, stdout="2770 root devs\n"),
+            VGS: make_result(VGS, returncode=lvm_rc, stdout=VGS_OUT if lvm_rc == 0 else ""),
+            PVS: make_result(PVS, returncode=lvm_rc, stdout=PVS_OUT if lvm_rc == 0 else ""),
+            LVS: make_result(LVS, returncode=lvm_rc, stdout=LVS_OUT if lvm_rc == 0 else ""),
         }
     )
 
@@ -55,13 +73,19 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "30/30" in out and "PASS" in out
+    assert "50/50" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
-    code, out, _ = run_cli(["check", "--all"], make_runner(group_rc=2))
+    code, out, _ = run_cli(["check", "--all"], make_runner(group_rc=2, lvm_rc=5))
     assert code == 1
-    assert "20/30" in out and "FAIL" in out
+    assert "20/50" in out and "FAIL" in out
+
+
+def test_check_storage_failure_shows_root_hint() -> None:
+    code, out, _ = run_cli(["check", "storage-01"], make_runner(lvm_rc=5))
+    assert code == 1 and "[KO] storage-01" in out
+    assert "exit 5" in out and "sudo" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:
