@@ -47,6 +47,10 @@ SHOW = (
 )  # fmt: skip
 GET_DEFAULT = ("systemctl", "get-default")
 SHOW_OUT = "LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n"
+FW_SVC_PERM = ("firewall-cmd", "--permanent", "--zone=public", "--query-service=http")
+FW_SVC_RUN = ("firewall-cmd", "--zone=public", "--query-service=http")
+FW_PORT_PERM = ("firewall-cmd", "--permanent", "--zone=public", "--query-port=8080/tcp")
+FW_PORT_RUN = ("firewall-cmd", "--zone=public", "--query-port=8080/tcp")
 ACL_OUT = "user::rwx\nuser:alice:rwx\ngroup::r-x\nmask::rwx\nother::---\n"
 
 
@@ -61,12 +65,14 @@ def make_runner(
     mount_device: str = DEVICE,
     svc_rc: int = 0,
     default_target: str = "multi-user.target",
+    fw_rc: int = 0,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
     lvm_err = "" if lvm_rc == 0 else "WARNING: Running as a non-root user.\n"
     mount_out = MOUNT_OUT.replace(DEVICE, mount_device)
     show_out = SHOW_OUT if svc_rc == 0 else ""
+    fw_out = "yes\n" if fw_rc == 0 else ""
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
@@ -85,6 +91,10 @@ def make_runner(
             GET_DEFAULT: make_result(
                 GET_DEFAULT, returncode=svc_rc, stdout=f"{default_target}\n" if svc_rc == 0 else ""
             ),
+            FW_SVC_PERM: make_result(FW_SVC_PERM, returncode=fw_rc, stdout=fw_out),
+            FW_SVC_RUN: make_result(FW_SVC_RUN, returncode=fw_rc, stdout=fw_out),
+            FW_PORT_PERM: make_result(FW_PORT_PERM, returncode=fw_rc, stdout=fw_out),
+            FW_PORT_RUN: make_result(FW_PORT_RUN, returncode=fw_rc, stdout=fw_out),
         }
     )
 
@@ -118,13 +128,14 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "90/90" in out and "PASS" in out
+    assert "110/110" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
-    code, out, _ = run_cli(["check", "--all"], make_runner(group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1))
+    runner = make_runner(group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253)
+    code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "20/90" in out and "FAIL" in out
+    assert "20/110" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -158,6 +169,15 @@ def test_check_service_tasks_ok_and_ko() -> None:
     code, out, _ = run_cli(["check", "svc-02"], runner)
     assert code == 1 and "[KO] svc-02" in out
     assert "graphical.target" in out and "multi-user.target" in out
+
+
+def test_check_firewall_tasks_ok_and_ko() -> None:
+    code, out, _ = run_cli(["check", "fw-01"], make_runner())
+    assert code == 0 and "[OK] fw-01" in out
+    code, out, _ = run_cli(["check", "fw-02"], make_runner())
+    assert code == 0 and "[OK] fw-02" in out
+    code, out, _ = run_cli(["check", "fw-01"], make_runner(fw_rc=253))
+    assert code == 1 and "[KO] fw-01" in out and "sudo" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:

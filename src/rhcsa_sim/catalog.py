@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from rhcsa_sim.checks.acl import PathHasAclEntry
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
+from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
 from rhcsa_sim.checks.services import DefaultTarget, UnitActiveStateIs, UnitFileStateIs
 from rhcsa_sim.checks.storage import (
@@ -128,6 +129,26 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 description="Configura multi-user.target como target por defecto del sistema.",
                 points=10,
                 checks=(DefaultTarget(runner, "multi-user.target"),),
+            ),
+            Task(
+                id="fw-01",
+                block=ObjectiveBlock.NETWORKING,
+                description=(
+                    "Permite el servicio http en la zona public del firewall "
+                    "de forma persistente y en ejecucion."
+                ),
+                points=10,
+                checks=(FirewallServiceAllowed(runner, "public", "http"),),
+            ),
+            Task(
+                id="fw-02",
+                block=ObjectiveBlock.NETWORKING,
+                description=(
+                    "Abre el puerto 8080/tcp en la zona public del firewall "
+                    "de forma persistente y en ejecucion."
+                ),
+                points=10,
+                checks=(FirewallPortAllowed(runner, "public", 8080, "tcp"),),
             ),
         ]
     )
