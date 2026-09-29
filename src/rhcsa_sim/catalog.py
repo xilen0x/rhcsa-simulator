@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from rhcsa_sim.checks._units import MIB
 from rhcsa_sim.checks.acl import PathHasAclEntry
+from rhcsa_sim.checks.blockdev import PartitionExists, SwapActive, SwapInFstabByUuid
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
@@ -92,6 +93,26 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 checks=(
                     LogicalVolumeExists(runner, "examvg", "datalv"),
                     LogicalVolumeSizeInRange(runner, "examvg", "datalv", 960 * MIB, 1088 * MIB),
+                ),
+            ),
+            Task(
+                id="part-01",
+                block=ObjectiveBlock.LOCAL_STORAGE,
+                description="Crea en el disco /dev/sdb una particion /dev/sdb2 de 512 MiB.",
+                points=10,
+                checks=(PartitionExists(runner, "/dev/sdb2", 480 * MIB, 560 * MIB),),
+            ),
+            Task(
+                id="swap-01",
+                block=ObjectiveBlock.LOCAL_STORAGE,
+                description=(
+                    "Formatea /dev/sdb2 como swap, activala y hazla persistente "
+                    "en /etc/fstab usando su UUID."
+                ),
+                points=10,
+                checks=(
+                    SwapActive(runner, "/dev/sdb2"),
+                    SwapInFstabByUuid(runner, "/dev/sdb2"),
                 ),
             ),
             Task(

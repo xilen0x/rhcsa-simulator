@@ -51,6 +51,26 @@ FW_SVC_PERM = ("firewall-cmd", "--permanent", "--zone=public", "--query-service=
 FW_SVC_RUN = ("firewall-cmd", "--zone=public", "--query-service=http")
 FW_PORT_PERM = ("firewall-cmd", "--permanent", "--zone=public", "--query-port=8080/tcp")
 FW_PORT_RUN = ("firewall-cmd", "--zone=public", "--query-port=8080/tcp")
+MIB = 1024 * 1024
+SWAP_UUID = "995e11a3-0000-45fe-a368-d4b5f25a5ee1"
+LSBLK_SDB2 = (
+    "lsblk", "-J", "-l", "-b", "-o", "PATH,KNAME,SIZE,TYPE,FSTYPE,UUID,PARTTYPENAME",
+    "--", "/dev/sdb2",
+)  # fmt: skip
+SWAPON = ("swapon", "--show=NAME,SIZE", "--bytes", "--noheadings", "--raw")
+FSTAB_SWAP = (
+    "findmnt", "-J", "--fstab", "-t", "swap", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS",
+)  # fmt: skip
+LSBLK_SDB2_OUT = (
+    '{"blockdevices": [{"path": "/dev/sdb2", "kname": "sdb2", "size": 536870912, '
+    f'"type": "part", "fstype": "swap", "uuid": "{SWAP_UUID}", '
+    '"parttypename": "Linux swap"}]}'
+)
+SWAPON_OUT = "/dev/sdb2 536866816\n"
+FSTAB_SWAP_OUT = (
+    f'{{"filesystems": [{{"target": "none", "source": "UUID={SWAP_UUID}", '
+    '"fstype": "swap", "options": "defaults"}]}'
+)
 SESTATUS = ("sestatus",)
 SE_STAT = ("stat", "-c", "%C", "--", "/srv/web")
 SE_RULE = ("matchpathcon", "-n", "--", "/srv/web")
@@ -84,6 +104,7 @@ def make_runner(
     fw_rc: int = 0,
     selinux_mode: str = "enforcing",
     semanage_rc: int = 0,
+    blockdev_rc: int = 0,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -98,6 +119,8 @@ def make_runner(
     )
     # sin root, semanage falla con rc 1 y un ValueError sobre el store de politica
     semanage_err = SEMANAGE_ROOT_ERR if semanage_rc == 1 else ""
+    # rc 32 = lsblk no encuentra el dispositivo
+    lsblk_out = LSBLK_SDB2_OUT if blockdev_rc == 0 else ""
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
@@ -110,6 +133,9 @@ def make_runner(
             LVS: make_result(LVS, returncode=lvm_rc, stdout=LVS_OUT, stderr=lvm_err),
             MOUNT: make_result(MOUNT, returncode=fs_rc, stdout=fs_out(mount_out, fs_rc)),
             FSTAB: make_result(FSTAB, returncode=fs_rc, stdout=fs_out(FSTAB_OUT, fs_rc)),
+            LSBLK_SDB2: make_result(LSBLK_SDB2, returncode=blockdev_rc, stdout=lsblk_out),
+            SWAPON: make_result(SWAPON, stdout=SWAPON_OUT),
+            FSTAB_SWAP: make_result(FSTAB_SWAP, stdout=FSTAB_SWAP_OUT),
             blkid: make_result(blkid, stdout=f"{UUID}\n"),
             GETFACL: make_result(GETFACL, returncode=fs_rc, stdout=fs_out(ACL_OUT, fs_rc)),
             SHOW: make_result(SHOW, returncode=svc_rc, stdout=show_out),
@@ -165,14 +191,16 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "150/150" in out and "PASS" in out
+    assert "170/170" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
-    runner = make_runner(group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1)
+    runner = make_runner(
+        group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32
+    )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "40/150" in out and "FAIL" in out
+    assert "40/170" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -190,6 +218,15 @@ def test_check_filesystem_tasks_ok_and_ko() -> None:
     assert code == 1 and "[KO] fs-01" in out and "not mounted" in out
     code, out, _ = run_cli(["check", "fs-02"], make_runner(fs_rc=127))
     assert code == 1 and "[KO] fs-02" in out and "install package acl" in out
+
+
+def test_check_partition_and_swap_tasks_ok_and_ko() -> None:
+    for task_id in ("part-01", "swap-01"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+    code, out, _ = run_cli(["check", "part-01"], make_runner(blockdev_rc=32))
+    assert code == 1 and "[KO] part-01" in out and "/dev/sdb2" in out
+    assert "does not exist" in out
 
 
 def test_check_fs_01_fails_when_mounted_from_another_device() -> None:
