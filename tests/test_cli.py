@@ -42,6 +42,11 @@ FSTAB_OUT = (
     f'{{"filesystems": [{{"target": "/data", "source": "UUID={UUID}", '
     '"fstype": "xfs", "options": "defaults"}]}'
 )
+SHOW = (
+    "systemctl", "show", "--property=LoadState,ActiveState,UnitFileState", "--", "httpd.service",
+)  # fmt: skip
+GET_DEFAULT = ("systemctl", "get-default")
+SHOW_OUT = "LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n"
 ACL_OUT = "user::rwx\nuser:alice:rwx\ngroup::r-x\nmask::rwx\nother::---\n"
 
 
@@ -50,12 +55,18 @@ def fs_out(stdout: str, rc: int) -> str:
 
 
 def make_runner(
-    group_rc: int = 0, lvm_rc: int = 0, fs_rc: int = 0, mount_device: str = DEVICE
+    group_rc: int = 0,
+    lvm_rc: int = 0,
+    fs_rc: int = 0,
+    mount_device: str = DEVICE,
+    svc_rc: int = 0,
+    default_target: str = "multi-user.target",
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
     lvm_err = "" if lvm_rc == 0 else "WARNING: Running as a non-root user.\n"
     mount_out = MOUNT_OUT.replace(DEVICE, mount_device)
+    show_out = SHOW_OUT if svc_rc == 0 else ""
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
@@ -70,6 +81,10 @@ def make_runner(
             FSTAB: make_result(FSTAB, returncode=fs_rc, stdout=fs_out(FSTAB_OUT, fs_rc)),
             blkid: make_result(blkid, stdout=f"{UUID}\n"),
             GETFACL: make_result(GETFACL, returncode=fs_rc, stdout=fs_out(ACL_OUT, fs_rc)),
+            SHOW: make_result(SHOW, returncode=svc_rc, stdout=show_out),
+            GET_DEFAULT: make_result(
+                GET_DEFAULT, returncode=svc_rc, stdout=f"{default_target}\n" if svc_rc == 0 else ""
+            ),
         }
     )
 
@@ -103,13 +118,13 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "70/70" in out and "PASS" in out
+    assert "90/90" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
-    code, out, _ = run_cli(["check", "--all"], make_runner(group_rc=2, lvm_rc=5, fs_rc=1))
+    code, out, _ = run_cli(["check", "--all"], make_runner(group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1))
     assert code == 1
-    assert "20/70" in out and "FAIL" in out
+    assert "20/90" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -134,6 +149,15 @@ def test_check_fs_01_fails_when_mounted_from_another_device() -> None:
     code, out, _ = run_cli(["check", "fs-01"], runner)
     assert code == 1 and "[KO] fs-01" in out
     assert "/dev/sdb2" in out and DEVICE in out
+
+
+def test_check_service_tasks_ok_and_ko() -> None:
+    code, out, _ = run_cli(["check", "svc-01"], make_runner())
+    assert code == 0 and "[OK] svc-01" in out
+    runner = make_runner(default_target="graphical.target")
+    code, out, _ = run_cli(["check", "svc-02"], runner)
+    assert code == 1 and "[KO] svc-02" in out
+    assert "graphical.target" in out and "multi-user.target" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:

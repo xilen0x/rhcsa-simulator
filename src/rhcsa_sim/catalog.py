@@ -3,6 +3,7 @@ from __future__ import annotations
 from rhcsa_sim.checks.acl import PathHasAclEntry
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
+from rhcsa_sim.checks.services import DefaultTarget, UnitActiveStateIs, UnitFileStateIs
 from rhcsa_sim.checks.storage import (
     MIB,
     LogicalVolumeExists,
@@ -108,6 +109,25 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(PathHasAclEntry(runner, "/data", "user:alice:rwx"),),
+            ),
+            Task(
+                id="svc-01",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description=(
+                    "Asegura que el servicio httpd este habilitado al arranque y en ejecucion."
+                ),
+                points=10,
+                checks=(
+                    UnitFileStateIs(runner, "httpd.service", "enabled"),
+                    UnitActiveStateIs(runner, "httpd.service", "active"),
+                ),
+            ),
+            Task(
+                id="svc-02",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description="Configura multi-user.target como target por defecto del sistema.",
+                points=10,
+                checks=(DefaultTarget(runner, "multi-user.target"),),
             ),
         ]
     )
