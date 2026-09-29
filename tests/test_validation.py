@@ -6,9 +6,13 @@ from rhcsa_sim.checks._validation import (
     validate_acl_entry,
     validate_block_device,
     validate_fstype,
+    validate_firewall_service,
     validate_lvm_name,
+    validate_port,
+    validate_protocol,
     validate_unit_name,
     validate_uuid,
+    validate_zone,
 )
 
 
@@ -176,3 +180,51 @@ def test_valid_unit_names(name: str) -> None:
 def test_invalid_unit_names(name: str) -> None:
     with pytest.raises(ValueError):
         validate_unit_name(name)
+
+
+@pytest.mark.parametrize("name", ["public", "dmz", "trusted", "my_zone-1", "a", "z" * 17])
+def test_valid_zones(name: str) -> None:
+    assert validate_zone(name) == name
+
+
+@pytest.mark.parametrize(
+    "name", ["", "-public", "--zone", "a b", "z;x", "a/b", "public\n", "zoná", "z" * 18]
+)
+def test_invalid_zones(name: str) -> None:
+    with pytest.raises(ValueError):
+        validate_zone(name)
+
+
+@pytest.mark.parametrize("name", ["http", "https", "ssh", "dhcpv6-client", "a", "x.y+z_1", "a" * 64])
+def test_valid_firewall_services(name: str) -> None:
+    assert validate_firewall_service(name) == name
+
+
+@pytest.mark.parametrize(
+    "name", ["", "-http", ".http", "HTTP", "ht tp", "http\n", "a/b", "x;y", "a" * 65]
+)
+def test_invalid_firewall_services(name: str) -> None:
+    with pytest.raises(ValueError):
+        validate_firewall_service(name)
+
+
+@pytest.mark.parametrize("port", [1, 80, 8080, 65535])
+def test_valid_ports(port: int) -> None:
+    assert validate_port(port) == port
+
+
+@pytest.mark.parametrize("port", [0, -1, 65536, True, False])
+def test_invalid_ports(port: int) -> None:
+    with pytest.raises(ValueError):
+        validate_port(port)
+
+
+@pytest.mark.parametrize("proto", ["tcp", "udp", "sctp", "dccp"])
+def test_valid_protocols(proto: str) -> None:
+    assert validate_protocol(proto) == proto
+
+
+@pytest.mark.parametrize("proto", ["", "TCP", "icmp", "tcp ", "tcp\n", "tcp/udp"])
+def test_invalid_protocols(proto: str) -> None:
+    with pytest.raises(ValueError):
+        validate_protocol(proto)

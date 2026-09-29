@@ -14,6 +14,9 @@ _UNIT_NAME_RE = re.compile(
     r"[A-Za-z0-9:_@][A-Za-z0-9:_.@-]{0,249}"
     r"\.(?:service|socket|timer|target|mount|path|automount|swap)"
 )
+_ZONE_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,16}")
+_FIREWALL_SERVICE_RE = re.compile(r"[a-z0-9][a-z0-9_.+-]{0,63}")
+_PROTOCOLS = frozenset({"tcp", "udp", "sctp", "dccp"})
 _ACL_PERMS = r"[r-][w-][x-]"
 _ACL_ENTRY_RE = re.compile(
     rf"(?:default:)?(?:(?:user|group):(?:[a-z_][a-z0-9_-]{{0,31}})?|(?:mask|other):):"
@@ -71,3 +74,29 @@ def validate_unit_name(name: str) -> str:
     if not _UNIT_NAME_RE.fullmatch(name):
         raise ValueError(f"invalid systemd unit name: {name!r}")
     return name
+
+
+def validate_zone(name: str) -> str:
+    """Zona de firewalld: hasta 17 caracteres y sin '-' inicial."""
+    if not _ZONE_RE.fullmatch(name):
+        raise ValueError(f"invalid firewalld zone: {name!r}")
+    return name
+
+
+def validate_firewall_service(name: str) -> str:
+    if not _FIREWALL_SERVICE_RE.fullmatch(name):
+        raise ValueError(f"invalid firewalld service: {name!r}")
+    return name
+
+
+def validate_port(port: int) -> int:
+    """Puerto 1-65535; un bool no cuenta como entero."""
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError(f"invalid port: {port!r}")
+    return port
+
+
+def validate_protocol(proto: str) -> str:
+    if proto not in _PROTOCOLS:
+        raise ValueError(f"invalid protocol: {proto!r}")
+    return proto
