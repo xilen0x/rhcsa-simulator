@@ -68,6 +68,58 @@ The menu remembers what you graded during the session. `q`, `Ctrl+D` and `Ctrl+C
 
 On a terminal, a 3-hour countdown is shown in the top-right corner. It keeps counting across reboots and reopening the menu: the exam start is stored in `/var/tmp/rhcsa-sim-exam.json`. Type `reset` (the full word) to start a new exam. Always run it with `sudo` (or always without) so the same user owns that file; otherwise the timer cannot be saved and a warning is shown.
 
+### Screens
+
+Each view replaces the previous one, and the command bar always stays at the bottom. On a terminal the timer is yellow and the status symbols are green and red.
+
+Opening the menu (`sudo .venv/bin/rhcsa-sim`):
+
+```text
+                                                          Time left 02:41:07
+╭──────────────────────────────────────────────────────────────────────────╮
+│ rhcsa-sim  RHCSA EX200 · RHEL 10                                         │
+│ 49 tasks, 490 points. Type h for help.                                   │
+╰──────────────────────────────────────────────────────────────────────────╯
+╭ Task 1/49 ───────────────────────────────────────────────────────────────╮
+│ users-01  users-groups  10 pts  • pending                                │
+│                                                                          │
+│ Crea el grupo 'devs' con GID 5000.                                       │
+╰──────────────────────────────────────────────────────────────────────────╯
+[Enter] next [p] prev [N|id] jump [c] check [a] all [l] list [h] help [q] quit
+>
+```
+
+Grading the current task with `c`:
+
+```text
+                                                          Time left 02:41:07
+╭ Task 1/49 ───────────────────────────────────────────────────────────────╮
+│ users-01  users-groups  10 pts  ✘ failed                                 │
+│                                                                          │
+│ Crea el grupo 'devs' con GID 5000.                                       │
+╰──────────────────────────────────────────────────────────────────────────╯
+✘ users-01  (0/10 pts)
+   ✘ group devs exists with GID 5000: group 'devs' does not exist
+[Enter] next [p] prev [N|id] jump [c] check [a] all [l] list [h] help [q] quit
+>
+```
+
+Listing the tasks with `l` (`>` marks the current task; `✔` passed, `✘` failed, `•` not graded yet):
+
+```text
+                                                          Time left 02:41:07
+   1 ✔  users-01     users-groups      10 pts
+   2 ✔  users-02     users-groups      10 pts
+>  3 ✘  users-03     users-groups      10 pts
+   4 •  users-04     users-groups      10 pts
+   5 •  users-05     users-groups      10 pts
+  ...
+  49 •  dep-03       deploy-maintain   10 pts
+[█░░░░░░░░░░░░░░░░░░░] graded 3/49, score so far 20/490
+[Enter] next [p] prev [N|id] jump [c] check [a] all [l] list [h] help [q] quit
+>
+```
+
 ## Commands
 
 The subcommands below are kept for scripts and one-off checks.
