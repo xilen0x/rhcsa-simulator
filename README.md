@@ -26,11 +26,20 @@ Example output:
 
 > **Run checks with `sudo`.** Many checks read root-only state (LVM, firewalld, SELinux, sudoers, `/root`, other users' files, `grubby`, `atq`). Without root they fail with a hint telling you to use sudo, and the task does not score.
 
+## Tested platforms
+
+Developed and tested on **AlmaLinux 10.2**. It has **not been tested on RHEL 10 yet**. AlmaLinux is binary-compatible with RHEL, so the commands should behave the same, but some details may differ:
+
+- Flatpak: AlmaLinux ships the `flathub` remote; RHEL may use a different remote, so `sw-01`/`sw-02` may need adjusting.
+- Boot entry titles from `grubby` name the distribution (only the kernel arguments are graded).
+
+If you run it on RHEL 10 or Rocky 10, please open an issue with what passed and what failed.
+
 ## Requirements
 
 | What | Why |
 |------|-----|
-| RHEL 10 or a rebuild (AlmaLinux, Rocky) | the tasks and commands target EX200 on RHEL 10 |
+| AlmaLinux 10 (tested) or RHEL 10 / Rocky 10 (expected to work, not yet tested) | the tasks and commands target EX200 on RHEL 10 |
 | Python 3.12+ | no runtime dependencies |
 | A spare disk at `/dev/sdb` | storage tasks create partitions, LVM, swap and VFAT on it |
 | Packages used by the checks: `acl`, `file`, `autofs`, `nfs-utils`, `flatpak`, `chrony`, `at` | a missing tool makes its checks fail, not crash |
@@ -79,7 +88,7 @@ Adding a task:
 
 1. Add a check class in `src/rhcsa_sim/checks/` if no existing check fits. Checks are frozen dataclasses that receive a `CommandRunner` and return a `CheckResult`.
 2. Declare the `Task` in `src/rhcsa_sim/catalog.py`.
-3. Test it with `rhcsa_sim.testing.FakeCommandRunner`, using real command output captured on a RHEL 10 machine as fixtures.
+3. Test it with `rhcsa_sim.testing.FakeCommandRunner`, using real command output captured on RHEL 10 or a compatible rebuild (AlmaLinux, Rocky) as fixtures.
 
 `CLAUDE.md` describes the architecture and conventions in more detail.
 
@@ -89,7 +98,7 @@ Issues and pull requests are welcome. Before opening a PR:
 
 - [ ] `.venv/bin/pytest` passes and `.venv/bin/mypy src tests` is clean.
 - [ ] New checks are read-only and tested with `FakeCommandRunner`.
-- [ ] Test fixtures come from real command output on RHEL 10 (say so in the PR if you could only derive them).
+- [ ] Test fixtures come from real command output on RHEL 10 or a compatible rebuild; say which one, and say so if you could only derive them.
 - [ ] New tasks map to an objective on the [official EX200 page](https://www.redhat.com/en/services/training/ex200-red-hat-certified-system-administrator-rhcsa-exam).
 
 ## License
