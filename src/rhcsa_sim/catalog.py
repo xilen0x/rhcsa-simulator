@@ -385,14 +385,16 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 block=ObjectiveBlock.CONTAINERS,
                 description=(
                     f"Haz que el contenedor web de {CONTAINER_USER} arranque con el sistema: "
-                    "define la unidad Quadlet web.container (imagen "
-                    f"{CONTAINER_IMAGE}, WantedBy=default.target), deja activo el servicio "
-                    "de usuario web.service y habilita linger."
+                    "sustituye el contenedor manual por el de Quadlet: define la unidad "
+                    f"web.container (imagen {CONTAINER_IMAGE}, ContainerName=web, "
+                    "WantedBy=default.target), deja activo el servicio de usuario "
+                    "web.service y habilita linger."
                 ),
                 points=10,
                 checks=(
                     QuadletUnitDefined(
-                        runner, CONTAINER_USER, "web", CONTAINER_IMAGE, "default.target"
+                        runner, CONTAINER_USER, "web", CONTAINER_IMAGE, "default.target",
+                        container_name="web",
                     ),
                     UserServiceActive(runner, CONTAINER_USER, "web.service"),
                     LingerEnabled(runner, CONTAINER_USER),

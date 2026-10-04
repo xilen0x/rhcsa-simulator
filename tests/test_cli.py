@@ -120,6 +120,7 @@ SYSINFO_GREP = ("grep", "-Fxq", "--", HOSTNAME, "/root/sysinfo.txt")
 CONTAINER_IMAGE = "registry.access.redhat.com/ubi10/httpd-24"
 ID_ALICE = ("id", "-u", "--", "alice")
 PODMAN = ("runuser", "-u", "alice", "--", "env", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
+RUNDIR = ("stat", "-c", "%F", "--", "/run/user/1234")
 LINGER = ("stat", "-c", "%F", "--", "/var/lib/systemd/linger/alice")
 IMAGE_EXISTS = (*PODMAN, "image", "exists", "--", CONTAINER_IMAGE)
 PODMAN_PS = (*PODMAN, "ps", "-a", "--format", "json")
@@ -136,7 +137,7 @@ MOUNTS_OUT = (
     '[{"Type": "bind", "Source": "/srv/web", "Destination": "/var/www/html", "RW": true}]'
 )
 QUADLET_OUT = (
-    f"[Container]\nImage={CONTAINER_IMAGE}\nPublishPort=8080:8080\n"
+    f"[Container]\nImage={CONTAINER_IMAGE}\nContainerName=web\nPublishPort=8080:8080\n"
     "Volume=/srv/web:/var/www/html:Z\n\n[Install]\nWantedBy=default.target\n"
 )
 CRON_OUT = "MAILTO=root\n30 14 * * * /usr/bin/date\n"
@@ -268,6 +269,7 @@ def make_runner(
             SCRIPT_SYNTAX: make_result(SCRIPT_SYNTAX, returncode=127 if script_rc else 0),
             SYSINFO_GREP: make_result(SYSINFO_GREP, returncode=2 if script_rc else 0),
             ID_ALICE: make_result(ID_ALICE, stdout="1234\n"),
+            RUNDIR: make_result(RUNDIR, stdout="directory\n"),
             LINGER: make_result(LINGER, returncode=container_rc, stdout="regular empty file\n"),
             IMAGE_EXISTS: podman_result(IMAGE_EXISTS, ""),
             PODMAN_PS: podman_result(PODMAN_PS, PS_OUT),

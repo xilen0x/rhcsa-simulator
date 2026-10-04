@@ -78,12 +78,19 @@ def _run_podman(
     uid = uid_result.stdout.strip()
     if not uid_result.ok or not uid.isdigit():
         return CheckResult(False, f"cannot resolve uid of user '{user}'")
+    # Sin /run/user/<uid> (sin linger ni sesion) podman falla con un error confuso.
+    if not runner.run(["stat", "-c", "%F", "--", f"/run/user/{uid}"]).ok:
+        return CheckResult(
+            False,
+            f"no runtime dir /run/user/{uid} for {user}: "
+            f"enable linger (loginctl enable-linger {user}) or log in",
+        )
     return runner.run(
         ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "podman", *args]
     )
 
 
-def _load_json(text: str) -> Any | None:
+def _load_json(text: str) -> object:
     try:
         return json.loads(text)
     except ValueError:
@@ -92,8 +99,9 @@ def _load_json(text: str) -> Any | None:
 
 def _inspect(
     runner: CommandRunner, user: str, name: str, template: str
-) -> Any | CheckResult:
-    """`podman inspect --format <template>` ya decodificado; rc 125 = no existe."""
+) -> object | CheckResult:
+    """`podman inspect --format <template>` ya decodificado (JSON, `None` si es
+    `null`); los callers estrechan el tipo. rc 125 = no existe."""
     result = _run_podman(runner, user, ["inspect", "--format", template, "--", name])
     if isinstance(result, CheckResult):
         return result
@@ -310,19 +318,24 @@ def _parse_ini(text: str) -> dict[str, list[tuple[str, str]]]:
 @dataclass(frozen=True, slots=True)
 class QuadletUnitDefined:
     """`~user/.config/containers/systemd/<name>.container` con [Container]
-    (y `Image=` si se indica) y `[Install] WantedBy=` incluyendo `wanted_by`."""
+    (con `Image=` y `ContainerName=` si se indican) y `[Install] WantedBy=`
+    incluyendo `wanted_by`. Sin ContainerName= Quadlet nombra el contenedor
+    `systemd-<name>`, no `<name>`."""
 
     runner: CommandRunner
     user: str
     name: str
     image: str | None = None
     wanted_by: str = "default.target"
+    container_name: str | None = None
 
     def __post_init__(self) -> None:
         validate_account_name(self.user)
         _validate_quadlet_name(self.name)
         if self.image is not None:
             _validate_image(self.image)
+        if self.container_name is not None:
+            _validate_container_name(self.container_name)
         validate_unit_name(self.wanted_by)
 
     def describe(self) -> str:
@@ -357,6 +370,13 @@ class QuadletUnitDefined:
             if not any(_normalize_image(i) == _normalize_image(self.image) for i in images):
                 shown = images[-1] if images else "(none)"
                 return CheckResult(False, f"Image= is {shown}, expected {self.image}")
+        if self.container_name is not None:
+            names = [v for k, v in container if k == "ContainerName"]
+            if not names or names[-1] != self.container_name:
+                shown = names[-1] if names else "(none)"
+                return CheckResult(
+                    False, f"ContainerName= is {shown}, expected {self.container_name}"
+                )
         wanted = [
             target
             for key, value in sections.get("Install", [])

@@ -19,6 +19,7 @@ from rhcsa_sim.testing import FakeCommandRunner, make_result
 IMAGE = "registry.access.redhat.com/ubi10/ubi-minimal"
 ID_ALICE = ("id", "-u", "--", "alice")
 PREFIX = ("runuser", "-u", "alice", "--", "env", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
+RUNDIR = ("stat", "-c", "%F", "--", "/run/user/1234")
 LINGER = ("stat", "-c", "%F", "--", "/var/lib/systemd/linger/alice")
 GETENT = ("getent", "passwd", "alice")
 UNIT_FILE = "/home/alice/.config/containers/systemd/web.container"
@@ -35,6 +36,7 @@ QUADLET = (
     "\n"
     "[Container]\n"
     f"Image={IMAGE}:latest\n"
+    "ContainerName=web\n"
     "PublishPort=8080:80\n"
     "\n"
     "[Install]\n"
@@ -68,6 +70,7 @@ def with_podman(
 ) -> FakeCommandRunner:
     return fake(
         (ID_ALICE, {"stdout": "1234\n"}),
+        (RUNDIR, {"stdout": "directory\n"}),
         (args, {"stdout": stdout, "returncode": returncode, "stderr": stderr}),
     )
 
@@ -175,6 +178,17 @@ def test_unknown_user_fails() -> None:
 def test_bad_uid_output_fails() -> None:
     runner = fake((ID_ALICE, {"stdout": "abc\n"}))
     assert not ContainerImageExists(runner, "alice", IMAGE).run().passed
+
+
+def test_missing_runtime_dir_hints_linger() -> None:
+    runner = fake(
+        (ID_ALICE, {"stdout": "1234\n"}),
+        (RUNDIR, {"returncode": 1, "stderr": "stat: cannot statx: No such file"}),
+    )
+    result = ContainerImageExists(runner, "alice", IMAGE).run()
+    assert not result.passed
+    assert "no runtime dir /run/user/1234 for alice" in result.detail
+    assert "loginctl enable-linger alice" in result.detail
 
 
 # --- ContainerRunning ---
@@ -312,6 +326,28 @@ def quadlet(text: str = QUADLET, passwd: str = PASSWD, cat_rc: int = 0) -> FakeC
 def test_quadlet_ok() -> None:
     assert QuadletUnitDefined(quadlet(), "alice", "web", IMAGE).run().passed
     assert QuadletUnitDefined(quadlet(), "alice", "web").run().passed
+
+
+def test_quadlet_container_name() -> None:
+    assert QuadletUnitDefined(quadlet(), "alice", "web", IMAGE, container_name="web").run().passed
+
+
+def test_quadlet_container_name_default_is_not_web() -> None:
+    text = QUADLET.replace("ContainerName=web\n", "")
+    result = QuadletUnitDefined(quadlet(text), "alice", "web", container_name="web").run()
+    assert not result.passed and "ContainerName= is (none)" in result.detail
+    assert QuadletUnitDefined(quadlet(text), "alice", "web").run().passed
+
+
+def test_quadlet_container_name_wrong() -> None:
+    text = QUADLET.replace("ContainerName=web", "ContainerName=other")
+    result = QuadletUnitDefined(quadlet(text), "alice", "web", container_name="web").run()
+    assert not result.passed and "other" in result.detail and "web" in result.detail
+
+
+def test_quadlet_container_name_validated() -> None:
+    with pytest.raises(ValueError):
+        QuadletUnitDefined(FakeCommandRunner({}), "alice", "web", container_name="-x")
 
 
 def test_quadlet_missing_file() -> None:
