@@ -40,6 +40,39 @@ def _check(stdout: str = "", rc: int = 0, stderr: str = "", arg: str = "audit=0"
     return KernelArgPresent(runner, arg)
 
 
+# salida literal de `sudo grubby --info=ALL` en la VM de laboratorio (2026-10-04)
+REAL_GRUBBY = """\
+index=0
+kernel="/boot/vmlinuz-6.12.0-211.49.1.el10_2.x86_64"
+args="ro crashkernel=2G-64G:256M,64G-:512M resume=UUID=995e11a3-d8d0-47b1-b098-623b4b1039a1 rd.lvm.lv=almalinux/root rd.lvm.lv=almalinux/swap audit=0"
+root="/dev/mapper/almalinux-root"
+initrd="/boot/initramfs-6.12.0-211.49.1.el10_2.x86_64.img"
+title="AlmaLinux (6.12.0-211.49.1.el10_2.x86_64) 10.2 (Lavender Lion)"
+id="e84779d92877485c97471ca85acc19f6-6.12.0-211.49.1.el10_2.x86_64"
+index=1
+kernel="/boot/vmlinuz-6.12.0-211.7.3.el10_2.x86_64"
+args="ro crashkernel=2G-64G:256M,64G-:512M resume=UUID=995e11a3-d8d0-47b1-b098-623b4b1039a1 rd.lvm.lv=almalinux/root rd.lvm.lv=almalinux/swap audit=0"
+root="/dev/mapper/almalinux-root"
+initrd="/boot/initramfs-6.12.0-211.7.3.el10_2.x86_64.img"
+title="AlmaLinux (6.12.0-211.7.3.el10_2.x86_64) 10.2 (Lavender Lion)"
+id="e84779d92877485c97471ca85acc19f6-6.12.0-211.7.3.el10_2.x86_64"
+index=2
+kernel="/boot/vmlinuz-0-rescue-e84779d92877485c97471ca85acc19f6"
+args="ro crashkernel=2G-64G:256M,64G-:512M resume=UUID=995e11a3-d8d0-47b1-b098-623b4b1039a1 rd.lvm.lv=almalinux/root rd.lvm.lv=almalinux/swap audit=0"
+root="/dev/mapper/almalinux-root"
+initrd="/boot/initramfs-0-rescue-e84779d92877485c97471ca85acc19f6.img"
+title="AlmaLinux (0-rescue-e84779d92877485c97471ca85acc19f6) 10.2 (Lavender Lion)"
+id="e84779d92877485c97471ca85acc19f6-0-rescue"
+"""
+
+
+def test_real_output_present_and_missing() -> None:
+    assert _check(REAL_GRUBBY, arg="audit=0").run().passed
+    result = _check(REAL_GRUBBY, arg="systemd.show_status=1").run()
+    assert not result.passed
+    assert "vmlinuz-0-rescue-e84779d92877485c97471ca85acc19f6" in result.detail
+
+
 def test_present_in_every_entry() -> None:
     result = _check(_grubby_out()).run()
     assert result.passed
