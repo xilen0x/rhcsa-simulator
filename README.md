@@ -15,6 +15,7 @@ python3 -m venv .venv
 .venv/bin/rhcsa-sim list              # see every task
 .venv/bin/rhcsa-sim show net-01       # read one task and its checks
 sudo .venv/bin/rhcsa-sim check --all  # grade everything
+sudo .venv/bin/rhcsa-sim              # interactive menu
 ```
 
 Example output:
@@ -46,7 +47,27 @@ If you run it on RHEL 10 or Rocky 10, please open an issue with what passed and 
 
 Task text (descriptions) is in Spanish; command output is in English.
 
+## Interactive menu
+
+Run `rhcsa-sim` with no arguments (use `sudo` for the root-only checks) to open a menu that walks through the tasks one at a time:
+
+| Key | Does |
+|-----|------|
+| `Enter` or `n` | next task |
+| `p` | previous task |
+| `<number>` or `<id>` | jump to a task (`3`, `net-01`) |
+| `c` | grade the current task only |
+| `a` | grade every task and print the total score |
+| `l` | list every task with its status and the running score |
+| `s` | show the current task again |
+| `h` or `?` | help |
+| `q` | quit |
+
+The menu remembers what you graded during the session. `q`, `Ctrl+D` and `Ctrl+C` all exit with code `0`.
+
 ## Commands
+
+The subcommands below are kept for scripts and one-off checks.
 
 | Command | Does |
 |---------|------|
