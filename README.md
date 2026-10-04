@@ -57,6 +57,101 @@ Task text (descriptions) is in Spanish; command output is in English.
 
 Exit codes: `0` every checked task passed, `1` at least one failed, `2` usage error or unknown task.
 
+## Resetting the lab
+
+The fastest and safest reset is a **VM snapshot**: take one before your first attempt and revert to it to start again from zero.
+
+```bash
+# libvirt / KVM, run on the host
+virsh snapshot-create-as <vm> clean      # once, on the fresh VM
+virsh snapshot-revert <vm> clean         # every time you want to start over
+```
+
+Without a snapshot, run the following as root (`sudo -i`) inside the VM. It undoes what the tasks ask for and leaves `/dev/sdb` empty.
+
+> **Warning:** this deletes users, files, logical volumes and every partition on `/dev/sdb`. Run it only on a practice VM.
+
+```bash
+# Scheduled jobs (before deleting alice)
+crontab -r -u alice 2>/dev/null
+for job in $(atq | awk '$NF == "alice" {print $1}'); do atrm "$job"; done
+
+# Users and groups
+userdel -r alice; userdel -r bob; groupdel devs
+sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS\t99999/' /etc/login.defs
+
+# Mounts, autofs and /etc/fstab
+systemctl disable --now autofs
+rm -f /etc/auto.master.d/remote.autofs /etc/auto.remote
+sed -i '\#^/remote[[:space:]]#d' /etc/auto.master
+umount /data /mnt/vfat /mnt/nfs 2>/dev/null
+swapoff /dev/sdb2 2>/dev/null
+sdb2_uuid=$(blkid -s UUID -o value /dev/sdb2)
+[ -n "$sdb2_uuid" ] && sed -i "/$sdb2_uuid/d" /etc/fstab
+sed -i -E '\#[[:space:]]/(data|mnt/vfat|mnt/nfs)[[:space:]]#d' /etc/fstab
+systemctl daemon-reload
+rmdir /data /mnt/vfat /mnt/nfs /remote 2>/dev/null
+
+# LVM and partitions on /dev/sdb
+lvremove -y examvg/datalv; vgremove -y examvg; pvremove -y /dev/sdb1
+wipefs -a /dev/sdb3 /dev/sdb2 /dev/sdb1 /dev/sdb
+partprobe /dev/sdb
+
+# Directories, SELinux and firewall
+semanage fcontext -d '/srv/web(/.*)?'
+rm -rf /srv/shared /srv/web
+setsebool -P httpd_can_network_connect off
+semanage port -d -t http_port_t -p tcp 82
+firewall-cmd --permanent --zone=public --remove-service=http --remove-port=8080/tcp
+firewall-cmd --reload
+
+# Services, network and hostname
+systemctl disable --now httpd
+nmcli connection delete exam-static
+hostnamectl hostname localhost.localdomain
+
+# Software
+cat > /etc/yum.repos.d/exam-internal.repo <<'EOF'
+[exam-internal]
+name=Exam Internal Repository
+baseurl=http://repo.exam.local/internal/$basearch/os/
+enabled=1
+gpgcheck=0
+skip_if_unavailable=False
+EOF
+flatpak uninstall --system -y org.gnome.TextEditor
+dnf --disablerepo=exam-internal remove -y at
+tuned-adm profile balanced
+
+# Scripts and files under /root
+rm -f /usr/local/bin/{sysinfo,etc-backup,check-users}.sh
+rm -rf /root/backups
+rm -f /root/{sysinfo.txt,services.bak,etc-backup.tar.gz,hosts-link,notes.txt,notes.hard,nologin.txt}
+rm -f /root/.ssh/id_ed25519 /root/.ssh/id_ed25519.pub
+ssh-keygen -R localhost
+
+# Timer, chrony, boot arguments, crond nice, journald
+systemctl disable --now backup.timer
+rm -f /etc/systemd/system/backup.{service,timer}
+systemctl daemon-reload
+sed -i '/^server[[:space:]]\+classroom\.example\.com/d' /etc/chrony.conf
+systemctl restart chronyd
+grubby --update-kernel=ALL --remove-args=systemd.show_status=1
+systemctl restart crond
+```
+
+A few things you named yourself, so remove them by hand:
+
+| Task | Undo |
+|------|------|
+| `sec-01` | delete the `PermitRootLogin no` line you added (`grep -rn PermitRootLogin /etc/ssh/sshd_config /etc/ssh/sshd_config.d/`), then `systemctl reload sshd` |
+| `sec-02` | delete your file in `/etc/sudoers.d/` (`grep -l alice /etc/sudoers.d/*`) |
+| `log-01` | delete the drop-in that sets `Storage=persistent` in `/etc/systemd/journald.conf.d/`, then `systemctl restart systemd-journald`. Keep `/var/log/journal`: on AlmaLinux 10 the `systemd` package ships it |
+| `dep-02` | put back the `server`/`pool` line you replaced in `/etc/chrony.conf` |
+| `svc-02` | `systemctl set-default graphical.target` if the VM had a desktop before |
+
+Things the script keeps on purpose: the local NFS export of `/srv/nfsexport` (a prerequisite for `fs-04`/`fs-05`, not a task), the `flathub` remote (AlmaLinux ships it) and SELinux in enforcing mode (the default). Reboot afterwards and run `sudo .venv/bin/rhcsa-sim check --all`: almost every task should now fail.
+
 ## What is covered
 
 Tasks are grouped by the official EX200 RHEL 10 objective blocks:
