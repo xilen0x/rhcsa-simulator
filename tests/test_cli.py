@@ -173,6 +173,7 @@ TIMER_CAL = ("systemctl", "show", "--property=TimersCalendar", "--value", "--", 
 CHRONY_CONF = ("cat", "--", "/etc/chrony.conf")
 GRUBBY = ("grubby", "--info=ALL")
 CRON_ALICE = ("crontab", "-l", "-u", "alice")
+ATQ = ("atq",)
 TUNED = ("tuned-adm", "active")
 SCRIPT = "/usr/local/bin/sysinfo.sh"
 SCRIPT_STAT = ("stat", "-c", "%a %F", "--", SCRIPT)
@@ -218,6 +219,7 @@ CMP_SERVICES = ("cmp", "-s", "--", "/etc/services", "/root/services.bak")
 NOLOGIN_GREP = ("grep", "--", "nologin", "/etc/passwd")
 NOLOGIN_CAT = ("cat", "--", "/root/nologin.txt")
 CRON_OUT = "MAILTO=root\n30 14 * * * /usr/bin/date\n"
+ATQ_OUT = "3\tMon Oct  5 09:00:00 2026 b alice\n"
 ACL_OUT = "user::rwx\nuser:alice:rwx\ngroup::r-x\nmask::rwx\nother::---\n"
 
 
@@ -401,6 +403,7 @@ def make_runner(
                 ),
                 stderr="grep: /boot/grub2/grubenv: Permission denied\n" if root_rc else "",
             ),
+            ATQ: make_result(ATQ, stdout="" if root_rc else ATQ_OUT),
             CRON_ALICE: make_result(
                 CRON_ALICE, returncode=root_rc, stderr=cron_err,
                 stdout="" if root_rc else CRON_OUT,
@@ -499,7 +502,7 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "480/480" in out and "PASS" in out
+    assert "490/490" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
@@ -510,7 +513,7 @@ def test_check_all_with_failure() -> None:
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "80/480" in out and "FAIL" in out
+    assert "80/490" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -619,7 +622,7 @@ def test_check_security_tasks_ok_and_ko() -> None:
 
 
 def test_check_maintenance_tasks_ok_and_ko() -> None:
-    for task_id in ("dnf-01", "pkg-01", "cron-01", "tuned-01"):
+    for task_id in ("dnf-01", "pkg-01", "cron-01", "at-01", "tuned-01"):
         code, out, _ = run_cli(["check", task_id], make_runner())
         assert code == 0 and f"[OK] {task_id}" in out
     code, out, _ = run_cli(["check", "tuned-01"], make_runner(tuned_profile="throughput-performance"))
@@ -629,6 +632,8 @@ def test_check_maintenance_tasks_ok_and_ko() -> None:
     assert code == 1 and "[KO] dnf-01" in out and "enabled" in out
     code, out, _ = run_cli(["check", "cron-01"], make_runner(root_rc=1))
     assert code == 1 and "[KO] cron-01" in out and "sudo" in out
+    code, out, _ = run_cli(["check", "at-01"], make_runner(root_rc=1))
+    assert code == 1 and "[KO] at-01" in out and "no at job queued for alice" in out
 
 
 def test_check_deploy_maintain_tasks_ok_and_ko() -> None:

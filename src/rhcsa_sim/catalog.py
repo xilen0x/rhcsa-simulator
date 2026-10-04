@@ -23,6 +23,7 @@ from rhcsa_sim.checks.filesystems import (
 from rhcsa_sim.checks.flatpak import FlatpakAppInstalled, FlatpakRemote
 from rhcsa_sim.checks.logs import JournalPersistent
 from rhcsa_sim.checks.maintenance import (
+    AtJobQueued,
     CronEntryExists,
     PackageInstalled,
     RepoNotEnabled,
@@ -488,6 +489,16 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(CronEntryExists(runner, "alice", "30 14 * * *", "/usr/bin/date"),),
+            ),
+            Task(
+                id="at-01",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description=(
+                    "Programa con at un trabajo para el usuario alice que se ejecute "
+                    "mañana a las 09:00."
+                ),
+                points=10,
+                checks=(AtJobQueued(runner, "alice"),),
             ),
             Task(
                 id="tuned-01",
