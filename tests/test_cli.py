@@ -114,6 +114,14 @@ RPM_AT = ("rpm", "-q", "--", "at")
 SHOW_ATD = (
     "systemctl", "show", "--property=LoadState,ActiveState,UnitFileState", "--", "atd.service",
 )  # fmt: skip
+SHOW_TIMER = (
+    "systemctl", "show", "--property=LoadState,ActiveState,UnitFileState", "--", "backup.timer",
+)  # fmt: skip
+SHOW_CHRONYD = (
+    "systemctl", "show", "--property=LoadState,ActiveState,UnitFileState", "--", "chronyd.service",
+)  # fmt: skip
+TIMER_CAL = ("systemctl", "show", "--property=TimersCalendar", "--value", "--", "backup.timer")
+CHRONY_CONF = ("cat", "--", "/etc/chrony.conf")
 CRON_ALICE = ("crontab", "-l", "-u", "alice")
 TUNED = ("tuned-adm", "active")
 SCRIPT = "/usr/local/bin/sysinfo.sh"
@@ -175,6 +183,8 @@ def make_runner(
     procs_ok: bool = True,
     ess_ok: bool = True,
     copy_rc: int = 0,
+    chrony_host: str = "classroom.example.com",
+    timer_calendar: str = "*-*-* 00:00:00",
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -268,6 +278,15 @@ def make_runner(
             REPOLIST: make_result(REPOLIST, stdout=repolist_out),
             RPM_AT: make_result(RPM_AT, stdout="at-3.2.5-13.el10.x86_64\n"),
             SHOW_ATD: make_result(SHOW_ATD, returncode=svc_rc, stdout=show_out),
+            SHOW_TIMER: make_result(SHOW_TIMER, returncode=svc_rc, stdout=show_out),
+            SHOW_CHRONYD: make_result(SHOW_CHRONYD, returncode=svc_rc, stdout=show_out),
+            TIMER_CAL: make_result(
+                TIMER_CAL,
+                stdout=f"{{ OnCalendar={timer_calendar} ; next_elapse=Mon 2026-10-05 00:00:00 UTC }}\n",
+            ),
+            CHRONY_CONF: make_result(
+                CHRONY_CONF, stdout=f"driftfile /var/lib/chrony/drift\nserver {chrony_host} iburst\n"
+            ),
             CRON_ALICE: make_result(
                 CRON_ALICE, returncode=root_rc, stderr=cron_err,
                 stdout="" if root_rc else CRON_OUT,
@@ -353,7 +372,7 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "370/370" in out and "PASS" in out
+    assert "390/390" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
@@ -364,7 +383,7 @@ def test_check_all_with_failure() -> None:
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "90/370" in out and "FAIL" in out
+    assert "90/390" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -465,6 +484,18 @@ def test_check_maintenance_tasks_ok_and_ko() -> None:
     assert code == 1 and "[KO] dnf-01" in out and "enabled" in out
     code, out, _ = run_cli(["check", "cron-01"], make_runner(root_rc=1))
     assert code == 1 and "[KO] cron-01" in out and "sudo" in out
+
+
+def test_check_deploy_maintain_tasks_ok_and_ko() -> None:
+    for task_id in ("dep-01", "dep-02"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+    code, out, _ = run_cli(["check", "dep-01"], make_runner(timer_calendar="Mon *-*-* 12:00:00"))
+    assert code == 1 and "[KO] dep-01" in out
+    assert "Mon *-*-* 12:00:00" in out and "*-*-* 00:00:00" in out
+    code, out, _ = run_cli(["check", "dep-02"], make_runner(chrony_host="192.0.2.1"))
+    assert code == 1 and "[KO] dep-02" in out
+    assert "192.0.2.1" in out and "classroom.example.com" in out
 
 
 def test_check_script_task_ok_and_ko() -> None:

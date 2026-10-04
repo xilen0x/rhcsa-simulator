@@ -39,7 +39,13 @@ from rhcsa_sim.checks.selinux import (
     SelinuxMode,
     SelinuxPortType,
 )
-from rhcsa_sim.checks.services import DefaultTarget, UnitActiveStateIs, UnitFileStateIs
+from rhcsa_sim.checks.services import (
+    DefaultTarget,
+    TimerOnCalendar,
+    UnitActiveStateIs,
+    UnitFileStateIs,
+)
+from rhcsa_sim.checks.timesync import ChronySource
 from rhcsa_sim.checks.storage import (
     LogicalVolumeExists,
     LogicalVolumeSizeInRange,
@@ -481,6 +487,34 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(GrepOutputSaved(runner, "/etc/passwd", "nologin", "/root/nologin.txt"),),
+            ),
+            Task(
+                id="dep-01",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description=(
+                    "Crea en /etc/systemd/system la unidad backup.service y el temporizador "
+                    "backup.timer con OnCalendar=daily; deja backup.timer habilitado y activo."
+                ),
+                points=10,
+                checks=(
+                    TimerOnCalendar(runner, "backup.timer", "*-*-* 00:00:00"),
+                    UnitFileStateIs(runner, "backup.timer", "enabled"),
+                    UnitActiveStateIs(runner, "backup.timer", "active"),
+                ),
+            ),
+            Task(
+                id="dep-02",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description=(
+                    "Configura chrony como cliente NTP con el servidor classroom.example.com; "
+                    "deja chronyd habilitado y en ejecucion."
+                ),
+                points=10,
+                checks=(
+                    ChronySource(runner, "classroom.example.com"),
+                    UnitFileStateIs(runner, "chronyd.service", "enabled"),
+                    UnitActiveStateIs(runner, "chronyd.service", "active"),
+                ),
             ),
         ]
     )
