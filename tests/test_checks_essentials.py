@@ -91,6 +91,16 @@ def test_archive_missing_file_and_bad_tar() -> None:
     assert not ArchiveContains(bad, ARCHIVE, "gzip", ("etc/fstab",)).run().passed
 
 
+def test_archive_unreadable_file_reports_cannot_open() -> None:
+    # `file` sale con rc 0 aunque no pueda abrir la ruta: lo indica en stdout.
+    fake = archive_runner(
+        mime=f"cannot open `{ARCHIVE}' (Permission denied)\n", tar_rc=2, listing=""
+    )
+    result = ArchiveContains(fake, ARCHIVE, "gzip", ("etc/fstab",)).run()
+    assert not result.passed
+    assert result.detail == f"cannot open '{ARCHIVE}' (Permission denied)"
+
+
 def test_archive_empty_file_mime() -> None:
     fake = archive_runner(mime="inode/x-empty\n")
     assert not ArchiveContains(fake, ARCHIVE, "gzip", ("etc/fstab",)).run().passed

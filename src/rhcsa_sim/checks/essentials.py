@@ -59,6 +59,10 @@ class ArchiveContains:
         if not mime.ok:
             return CheckResult(False, f"cannot inspect '{self.path}'")
         found = mime.stdout.strip()
+        # `file` sale con rc 0 aunque no pueda abrir la ruta: "cannot open `p' (motivo)".
+        if found.startswith("cannot open"):
+            reason = found[found.rfind("(") :] if found.endswith(")") else ""
+            return CheckResult(False, f"cannot open '{self.path}' {reason}".rstrip())
         expected = _COMPRESSION_MIME[self.compression]
         if found != expected:
             return CheckResult(False, f"type is {found or 'unknown'}, expected {expected}")
