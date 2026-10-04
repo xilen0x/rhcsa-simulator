@@ -25,6 +25,8 @@ Example output:
      [KO] hostname is servera.lab.example.com: hostname is localhost.localdomain, expected servera.lab.example.com
 ```
 
+> **On a fresh VM, run the [lab reset](#resetting-the-lab) first.** It sets up the broken starting state some tasks expect; otherwise `dnf-01`, `svc-02` and `se-01` already pass.
+
 > **Run checks with `sudo`.** Many checks read root-only state (LVM, firewalld, SELinux, sudoers, `/root`, other users' files, `grubby`, `atq`). Without root they fail with a hint telling you to use sudo, and the task does not score.
 
 ## Tested platforms
@@ -80,15 +82,17 @@ Exit codes: `0` every checked task passed, `1` at least one failed, `2` usage er
 
 ## Resetting the lab
 
-The fastest and safest reset is a **VM snapshot**: take one before your first attempt and revert to it to start again from zero.
+**Run the reset once on a fresh VM before your first attempt.** Some tasks ask you to fix something that is broken on purpose (an enabled bad repository, the wrong default target, SELinux in permissive mode). A fresh AlmaLinux install already has the fixed state, so without the reset `dnf-01`, `svc-02` and `se-01` show up as solved before you touch anything.
+
+The fastest and safest reset is a **VM snapshot**: take one right after the first reset and revert to it to start again from zero.
 
 ```bash
 # libvirt / KVM, run on the host
-virsh snapshot-create-as <vm> clean      # once, on the fresh VM
+virsh snapshot-create-as <vm> clean      # once, right after the first reset
 virsh snapshot-revert <vm> clean         # every time you want to start over
 ```
 
-Without a snapshot, run the following as root (`sudo -i`) inside the VM. It undoes what the tasks ask for and leaves `/dev/sdb` empty.
+Run the following as root (`sudo -i`) inside the VM. It undoes what the tasks ask for, puts back the broken starting state some tasks expect, and leaves `/dev/sdb` empty.
 
 > **Warning:** this deletes users, files, logical volumes and every partition on `/dev/sdb`. Run it only on a practice VM.
 
@@ -121,6 +125,8 @@ partprobe /dev/sdb
 # Directories, SELinux and firewall
 semanage fcontext -d '/srv/web(/.*)?'
 rm -rf /srv/shared /srv/web
+sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config   # se-01 starts broken
+setenforce 0
 setsebool -P httpd_can_network_connect off
 semanage port -d -t http_port_t -p tcp 82
 firewall-cmd --permanent --zone=public --remove-service=http --remove-port=8080/tcp
@@ -128,11 +134,12 @@ firewall-cmd --reload
 
 # Services, network and hostname
 systemctl disable --now httpd
+systemctl set-default graphical.target   # svc-02 starts broken
 nmcli connection delete exam-static
 hostnamectl hostname localhost.localdomain
 
 # Software
-cat > /etc/yum.repos.d/exam-internal.repo <<'EOF'
+cat > /etc/yum.repos.d/exam-internal.repo <<'EOF'   # dnf-01 starts broken
 [exam-internal]
 name=Exam Internal Repository
 baseurl=http://repo.exam.local/internal/$basearch/os/
@@ -169,9 +176,8 @@ A few things you named yourself, so remove them by hand:
 | `sec-02` | delete your file in `/etc/sudoers.d/` (`grep -l alice /etc/sudoers.d/*`) |
 | `log-01` | delete the drop-in that sets `Storage=persistent` in `/etc/systemd/journald.conf.d/`, then `systemctl restart systemd-journald`. Keep `/var/log/journal`: on AlmaLinux 10 the `systemd` package ships it |
 | `dep-02` | put back the `server`/`pool` line you replaced in `/etc/chrony.conf` |
-| `svc-02` | `systemctl set-default graphical.target` if the VM had a desktop before |
 
-Things the script keeps on purpose: the local NFS export of `/srv/nfsexport` (a prerequisite for `fs-04`/`fs-05`, not a task), the `flathub` remote (AlmaLinux ships it) and SELinux in enforcing mode (the default). Reboot afterwards and run `sudo .venv/bin/rhcsa-sim check --all`: almost every task should now fail.
+Things the script keeps on purpose: the local NFS export of `/srv/nfsexport` (a prerequisite for `fs-04`/`fs-05`, not a task) and the `flathub` remote (AlmaLinux ships it). `graphical.target` works as a default even on a VM without a desktop: it boots to the same console. Reboot afterwards and run `sudo .venv/bin/rhcsa-sim check --all`: almost every task should now fail.
 
 ## What is covered
 
