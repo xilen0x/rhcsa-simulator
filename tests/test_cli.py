@@ -722,6 +722,22 @@ def test_unknown_task_id_is_sanitized() -> None:
     assert "\x1b" not in err
 
 
-def test_missing_command_returns_usage_code(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main([]) == 2
-    capsys.readouterr()
+def test_no_args_opens_interactive_session_and_quits() -> None:
+    out = io.StringIO()
+    code = main(
+        [], runner=make_runner(), stdout=out, stderr=io.StringIO(),
+        env={}, stdin=io.StringIO("3\nq\n"),
+    )  # fmt: skip
+    text = out.getvalue()
+    assert code == 0
+    assert "RHCSA EX200" in text and "Task 3/" in text and "Bye!" in text
+    assert "\x1b" not in text
+
+
+def test_no_args_eof_exits_zero_and_uses_ascii_for_non_utf8_stream() -> None:
+    class AsciiOut(io.StringIO):
+        encoding = "ascii"
+
+    out = AsciiOut()
+    code = main([], runner=make_runner(), stdout=out, env={}, stdin=io.StringIO(""))
+    assert code == 0 and out.getvalue().isascii()
