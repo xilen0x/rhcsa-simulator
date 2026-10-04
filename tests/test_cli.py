@@ -117,6 +117,10 @@ SCRIPT_STAT = ("stat", "-c", "%a %F", "--", SCRIPT)
 SCRIPT_HEAD = ("head", "-n", "1", "--", SCRIPT)
 SCRIPT_SYNTAX = ("bash", "-n", "--", SCRIPT)
 SYSINFO_GREP = ("grep", "-Fxq", "--", HOSTNAME, "/root/sysinfo.txt")
+PS_CROND = ("ps", "-C", "crond", "-o", "pid=,ni=,user:32=,comm=")
+PS_YES = ("ps", "-C", "yes", "-o", "pid=,ni=,user:32=,comm=")
+JOURNAL_CONF = ("systemd-analyze", "cat-config", "systemd/journald.conf")
+JOURNAL_DIR = ("stat", "-c", "%F", "--", "/var/log/journal")
 CONTAINER_IMAGE = "registry.access.redhat.com/ubi10/httpd-24"
 ID_ALICE = ("id", "-u", "--", "alice")
 PODMAN = ("runuser", "-u", "alice", "--", "env", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
@@ -167,6 +171,7 @@ def make_runner(
     tuned_profile: str = "virtual-guest",
     script_rc: int = 0,
     container_rc: int = 0,
+    procs_ok: bool = True,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -211,6 +216,11 @@ def make_runner(
         if root_rc:
             return make_result(args, returncode=1, stderr=runuser_err)
         return make_result(args, returncode=container_rc, stdout="" if container_rc else stdout)
+
+    # procs_ok=False: crond con nice 0, un yes descontrolado y journald con Storage=auto
+    crond_out = f"  701 {10 if procs_ok else 0} root     crond\n"
+    yes_rc, yes_out = (1, "") if procs_ok else (0, "  4242   0 alice    yes\n")
+    journal_conf = f"[Journal]\nStorage={'persistent' if procs_ok else 'auto'}\n"
 
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
@@ -268,6 +278,10 @@ def make_runner(
             ),
             SCRIPT_SYNTAX: make_result(SCRIPT_SYNTAX, returncode=127 if script_rc else 0),
             SYSINFO_GREP: make_result(SYSINFO_GREP, returncode=2 if script_rc else 0),
+            PS_CROND: make_result(PS_CROND, stdout=crond_out),
+            PS_YES: make_result(PS_YES, returncode=yes_rc, stdout=yes_out),
+            JOURNAL_CONF: make_result(JOURNAL_CONF, stdout=journal_conf),
+            JOURNAL_DIR: make_result(JOURNAL_DIR, stdout="directory\n"),
             ID_ALICE: make_result(ID_ALICE, stdout="1234\n"),
             RUNDIR: make_result(RUNDIR, stdout="directory\n"),
             LINGER: make_result(LINGER, returncode=container_rc, stdout="regular empty file\n"),
@@ -328,18 +342,18 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "290/290" in out and "PASS" in out
+    assert "320/320" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
         group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
         net_method="auto", running_hostname="localhost", root_rc=1, script_rc=1,
-        container_rc=1,
+        container_rc=1, procs_ok=False,
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "60/290" in out and "FAIL" in out
+    assert "60/320" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -457,6 +471,14 @@ def test_check_container_tasks_ok_and_ko() -> None:
         assert code == 1 and f"[KO] {task_id}" in out and "sudo" in out
     code, out, _ = run_cli(["check", "con-02"], make_runner(container_rc=1))
     assert code == 1 and "[KO] con-02" in out
+
+
+def test_check_process_and_journal_tasks_ok_and_ko() -> None:
+    for task_id in ("prc-01", "prc-02", "log-01"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+        code, out, _ = run_cli(["check", task_id], make_runner(procs_ok=False))
+        assert code == 1 and f"[KO] {task_id}" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:

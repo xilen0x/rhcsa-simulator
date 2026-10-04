@@ -15,6 +15,7 @@ from rhcsa_sim.checks.containers import (
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
+from rhcsa_sim.checks.logs import JournalPersistent
 from rhcsa_sim.checks.maintenance import (
     CronEntryExists,
     PackageInstalled,
@@ -27,6 +28,7 @@ from rhcsa_sim.checks.network import (
     ConnectionStaticIpv4,
     HostnameIs,
 )
+from rhcsa_sim.checks.processes import ProcessNotRunning, ProcessRunning
 from rhcsa_sim.checks.scripts import (
     FileContainsLine,
     FileIsExecutable,
@@ -399,6 +401,36 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                     UserServiceActive(runner, CONTAINER_USER, "web.service"),
                     LingerEnabled(runner, CONTAINER_USER),
                 ),
+            ),
+            Task(
+                id="prc-01",
+                block=ObjectiveBlock.RUNNING_SYSTEMS,
+                description=(
+                    "Baja la prioridad del demonio crond (que ya esta en ejecucion) a un "
+                    "valor nice de 10 sin reiniciarlo; debe seguir ejecutandose como root."
+                ),
+                points=10,
+                checks=(ProcessRunning(runner, "crond", nice=10, user="root"),),
+            ),
+            Task(
+                id="prc-02",
+                block=ObjectiveBlock.RUNNING_SYSTEMS,
+                description=(
+                    "Un proceso yes descontrolado esta consumiendo toda la CPU: localizalo "
+                    "y terminalo para que no quede ninguna instancia en ejecucion."
+                ),
+                points=10,
+                checks=(ProcessNotRunning(runner, "yes"),),
+            ),
+            Task(
+                id="log-01",
+                block=ObjectiveBlock.RUNNING_SYSTEMS,
+                description=(
+                    "Haz que el registro de systemd-journald sea persistente tras los "
+                    "reinicios: crea /var/log/journal y configura Storage=persistent."
+                ),
+                points=10,
+                checks=(JournalPersistent(runner),),
             ),
         ]
     )
