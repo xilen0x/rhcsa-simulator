@@ -8,8 +8,8 @@ def test_catalog_has_expected_well_formed_tasks() -> None:
     tasks = build_catalog(FakeCommandRunner({})).all()
     ids = ["users-01", "users-02", "users-03", "users-04", "users-05", "files-01", "storage-01", "storage-02", "part-01", "swap-01", "fs-01", "fs-02", "fs-03", "fs-04", "fs-05"]
     ids += ["svc-01", "svc-02", "fw-01", "fw-02", "net-01", "net-02", "net-03", "se-01", "se-02", "se-03", "se-04", "sec-01", "sec-02", "sec-03", "sec-04"]
-    ids += ["dnf-01", "pkg-01", "cron-01", "tuned-01"]
-    ids += ["scr-01", "scr-02"]
+    ids += ["dnf-01", "pkg-01", "sw-01", "sw-02", "cron-01", "tuned-01"]
+    ids += ["scr-01", "scr-02", "scr-03"]
     ids += ["prc-01", "log-01", "run-01"]
     ids += ["ess-01", "ess-02", "ess-03"]
     ids += ["dep-01", "dep-02", "dep-03"]
@@ -25,8 +25,10 @@ def test_running_systems_and_scripts_blocks() -> None:
     running = {i for i, t in tasks.items() if t.block is ObjectiveBlock.RUNNING_SYSTEMS}
     assert running == {"prc-01", "log-01", "tuned-01", "run-01"}
     scripts = {i for i, t in tasks.items() if t.block is ObjectiveBlock.SHELL_SCRIPTS}
-    assert scripts == {"scr-01", "scr-02"}
+    assert scripts == {"scr-01", "scr-02", "scr-03"}
     assert len(tasks["scr-02"].checks) == 4
+    assert len(tasks["scr-03"].checks) == 4
+    assert "estatica" in tasks["scr-03"].description
 
 
 def test_manage_software_block_and_no_containers() -> None:
@@ -34,7 +36,7 @@ def test_manage_software_block_and_no_containers() -> None:
 
     tasks = {t.id: t for t in build_catalog(FakeCommandRunner({})).all()}
     software = {i for i, t in tasks.items() if t.block is ObjectiveBlock.MANAGE_SOFTWARE}
-    assert software == {"dnf-01", "pkg-01"}
+    assert software == {"dnf-01", "pkg-01", "sw-01", "sw-02"}
     assert not hasattr(ObjectiveBlock, "CONTAINERS")
     assert [b.name for b in ObjectiveBlock] == [
         "ESSENTIAL_TOOLS", "MANAGE_SOFTWARE", "SHELL_SCRIPTS", "RUNNING_SYSTEMS",
@@ -46,7 +48,7 @@ def test_manage_software_block_and_no_containers() -> None:
 
 def test_catalog_totals() -> None:
     tasks = build_catalog(FakeCommandRunner({})).all()
-    assert (len(tasks), sum(t.points for t in tasks)) == (45, 450)
+    assert (len(tasks), sum(t.points for t in tasks)) == (48, 480)
 
 
 def test_deploy_timer_and_time_service_tasks() -> None:

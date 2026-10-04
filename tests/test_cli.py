@@ -201,6 +201,19 @@ BACKUP_SYNTAX = ("bash", "-n", "--", BACKUP_SCRIPT)
 BACKUP_ARCHIVE = "/root/backups/etc.tar.gz"
 BACKUP_MIME = ("file", "-b", "--mime-type", "--", BACKUP_ARCHIVE)
 BACKUP_LIST = ("tar", "-tf", BACKUP_ARCHIVE)
+USERS_SCRIPT = "/usr/local/bin/check-users.sh"
+USERS_STAT = ("stat", "-c", "%a %F", "--", USERS_SCRIPT)
+USERS_HEAD = ("head", "-n", "1", "--", USERS_SCRIPT)
+USERS_SYNTAX = ("bash", "-n", "--", USERS_SCRIPT)
+USERS_CAT = ("cat", "--", USERS_SCRIPT)
+USERS_BODY = (
+    "#!/bin/bash\n"
+    'for u in "$@"; do\n'
+    '  if id "$u" >/dev/null 2>&1; then echo "$u: $(id -u "$u")"; fi\n'
+    "done\n"
+)
+FLATPAK_REMOTES = ("flatpak", "remotes", "--system", "--columns=name,url")
+FLATPAK_INFO = ("flatpak", "info", "--system", "--", "org.gnome.TextEditor")
 CMP_SERVICES = ("cmp", "-s", "--", "/etc/services", "/root/services.bak")
 NOLOGIN_GREP = ("grep", "--", "nologin", "/etc/passwd")
 NOLOGIN_CAT = ("cat", "--", "/root/nologin.txt")
@@ -238,6 +251,8 @@ def make_runner(
     boot_arg: str = "systemd.show_status=1",
     lab_ok: bool = True,
     keys_ok: bool = True,
+    flatpak_ok: bool = True,
+    script_body: str = USERS_BODY,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -408,6 +423,19 @@ def make_runner(
                 BACKUP_MIME, stdout="application/gzip\n" if ess_ok else "application/x-xz\n"
             ),
             BACKUP_LIST: make_result(BACKUP_LIST, stdout="etc/\netc/fstab\netc/hosts\n"),
+            USERS_STAT: make_result(USERS_STAT, returncode=script_rc, stdout=script_out),
+            USERS_HEAD: make_result(
+                USERS_HEAD, returncode=script_rc, stdout="#!/bin/bash\n" if script_rc == 0 else ""
+            ),
+            USERS_SYNTAX: make_result(USERS_SYNTAX, returncode=127 if script_rc else 0),
+            USERS_CAT: make_result(
+                USERS_CAT, returncode=script_rc, stdout=script_body if script_rc == 0 else ""
+            ),
+            FLATPAK_REMOTES: make_result(
+                FLATPAK_REMOTES,
+                stdout="flathub\thttps://dl.flathub.org/repo/\n" if flatpak_ok else "",
+            ),
+            FLATPAK_INFO: make_result(FLATPAK_INFO, returncode=0 if flatpak_ok else 1),
             CMP_SERVICES: make_result(CMP_SERVICES, returncode=copy_rc),
             ARCHIVE_MIME: make_result(
                 ARCHIVE_MIME, stdout="application/gzip\n" if ess_ok else "application/x-xz\n"
@@ -471,18 +499,18 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "450/450" in out and "PASS" in out
+    assert "480/480" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
         group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
         net_method="auto", running_hostname="localhost", root_rc=1, script_rc=1,
-        procs_ok=False, ess_ok=False, copy_rc=1, lab_ok=False, keys_ok=False,
+        procs_ok=False, ess_ok=False, copy_rc=1, lab_ok=False, keys_ok=False, flatpak_ok=False,
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "80/450" in out and "FAIL" in out
+    assert "80/480" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -633,6 +661,23 @@ def test_check_backup_script_task_ok_and_ko() -> None:
     assert code == 1 and "[KO] scr-02" in out and "cannot stat" in out
     code, out, _ = run_cli(["check", "scr-02"], make_runner(ess_ok=False))
     assert code == 1 and "[KO] scr-02" in out
+
+
+def test_check_users_script_task_ok_and_ko() -> None:
+    code, out, _ = run_cli(["check", "scr-03"], make_runner())
+    assert code == 0 and "[OK] scr-03" in out
+    code, out, _ = run_cli(["check", "scr-03"], make_runner(script_rc=1))
+    assert code == 1 and "[KO] scr-03" in out and "cannot stat" in out
+    code, out, _ = run_cli(["check", "scr-03"], make_runner(script_body="#!/bin/bash\necho hi\n"))
+    assert code == 1 and "[KO] scr-03" in out and "missing constructs: if, for, args, cmdsubst" in out
+
+
+def test_check_flatpak_tasks_ok_and_ko() -> None:
+    for task_id in ("sw-01", "sw-02"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+        code, out, _ = run_cli(["check", task_id], make_runner(flatpak_ok=False))
+        assert code == 1 and f"[KO] {task_id}" in out
 
 
 def test_check_secure_copy_task_ok_and_ko() -> None:

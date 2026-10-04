@@ -20,6 +20,7 @@ from rhcsa_sim.checks.filesystems import (
     MountedAt,
     NfsMountedAt,
 )
+from rhcsa_sim.checks.flatpak import FlatpakAppInstalled, FlatpakRemote
 from rhcsa_sim.checks.logs import JournalPersistent
 from rhcsa_sim.checks.maintenance import (
     CronEntryExists,
@@ -40,6 +41,7 @@ from rhcsa_sim.checks.scripts import (
     FileIsExecutable,
     ScriptHasShebang,
     ScriptSyntaxValid,
+    ScriptUsesConstructs,
 )
 from rhcsa_sim.checks.security import (
     AuthorizedKeyPresent,
@@ -458,6 +460,26 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
             ),
             Task(
+                id="sw-01",
+                block=ObjectiveBlock.MANAGE_SOFTWARE,
+                description=(
+                    "Asegura que el remoto Flatpak 'flathub' este configurado a nivel de "
+                    "sistema con la URL https://dl.flathub.org/repo/."
+                ),
+                points=10,
+                checks=(FlatpakRemote(runner, "flathub", "https://dl.flathub.org/repo/"),),
+            ),
+            Task(
+                id="sw-02",
+                block=ObjectiveBlock.MANAGE_SOFTWARE,
+                description=(
+                    "Instala a nivel de sistema (--system) la aplicacion Flatpak "
+                    "org.gnome.TextEditor desde el remoto flathub."
+                ),
+                points=10,
+                checks=(FlatpakAppInstalled(runner, "org.gnome.TextEditor"),),
+            ),
+            Task(
                 id="cron-01",
                 block=ObjectiveBlock.DEPLOY_MAINTAIN,
                 description=(
@@ -508,6 +530,28 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                     ScriptSyntaxValid(runner, "/usr/local/bin/etc-backup.sh"),
                     ArchiveContains(
                         runner, "/root/backups/etc.tar.gz", "gzip", ("etc/hosts", "etc/fstab")
+                    ),
+                ),
+            ),
+            Task(
+                id="scr-03",
+                block=ObjectiveBlock.SHELL_SCRIPTS,
+                description=(
+                    "Crea el script ejecutable /usr/local/bin/check-users.sh (bash) que reciba "
+                    "nombres de usuario como argumentos, los recorra con un bucle for, use "
+                    "if/test para indicar si cada usuario existe y use la salida de un comando "
+                    "(por ejemplo $(id -u \"$u\")). Se evalua de forma estatica: el script "
+                    "no se ejecuta."
+                ),
+                points=10,
+                checks=(
+                    FileIsExecutable(runner, "/usr/local/bin/check-users.sh"),
+                    ScriptHasShebang(runner, "/usr/local/bin/check-users.sh", "/bin/bash"),
+                    ScriptSyntaxValid(runner, "/usr/local/bin/check-users.sh"),
+                    ScriptUsesConstructs(
+                        runner,
+                        "/usr/local/bin/check-users.sh",
+                        ("if", "for", "args", "cmdsubst"),
                     ),
                 ),
             ),
