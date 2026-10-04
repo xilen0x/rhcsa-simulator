@@ -49,7 +49,7 @@ class JournalPersistent:
             problems.append("Storage not set (default auto)")
         elif storage != "persistent":
             problems.append(f"Storage={storage} (expected persistent)")
-        stat = self.runner.run(["stat", "-c", "%F", "--", _JOURNAL_DIR])
+        stat = self.runner.run(["stat", "-L", "-c", "%F", "--", _JOURNAL_DIR])
         kind = stat.stdout.strip()
         if not stat.ok:
             problems.append(f"{_JOURNAL_DIR} does not exist")

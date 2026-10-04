@@ -117,10 +117,9 @@ SCRIPT_STAT = ("stat", "-c", "%a %F", "--", SCRIPT)
 SCRIPT_HEAD = ("head", "-n", "1", "--", SCRIPT)
 SCRIPT_SYNTAX = ("bash", "-n", "--", SCRIPT)
 SYSINFO_GREP = ("grep", "-Fxq", "--", HOSTNAME, "/root/sysinfo.txt")
-PS_CROND = ("ps", "-C", "crond", "-o", "pid=,ni=,user:32=,comm=")
-PS_YES = ("ps", "-C", "yes", "-o", "pid=,ni=,user:32=,comm=")
+PS_CROND = ("ps", "-C", "crond", "-o", "pid=,ni=,user:32=,stat=,comm=")
 JOURNAL_CONF = ("systemd-analyze", "cat-config", "systemd/journald.conf")
-JOURNAL_DIR = ("stat", "-c", "%F", "--", "/var/log/journal")
+JOURNAL_DIR = ("stat", "-L", "-c", "%F", "--", "/var/log/journal")
 CONTAINER_IMAGE = "registry.access.redhat.com/ubi10/httpd-24"
 ID_ALICE = ("id", "-u", "--", "alice")
 PODMAN = ("runuser", "-u", "alice", "--", "env", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
@@ -218,8 +217,7 @@ def make_runner(
         return make_result(args, returncode=container_rc, stdout="" if container_rc else stdout)
 
     # procs_ok=False: crond con nice 0, un yes descontrolado y journald con Storage=auto
-    crond_out = f"  701 {10 if procs_ok else 0} root     crond\n"
-    yes_rc, yes_out = (1, "") if procs_ok else (0, "  4242   0 alice    yes\n")
+    crond_out = f"  701 {10 if procs_ok else 0} root     Ss   crond\n"
     journal_conf = f"[Journal]\nStorage={'persistent' if procs_ok else 'auto'}\n"
 
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
@@ -279,7 +277,6 @@ def make_runner(
             SCRIPT_SYNTAX: make_result(SCRIPT_SYNTAX, returncode=127 if script_rc else 0),
             SYSINFO_GREP: make_result(SYSINFO_GREP, returncode=2 if script_rc else 0),
             PS_CROND: make_result(PS_CROND, stdout=crond_out),
-            PS_YES: make_result(PS_YES, returncode=yes_rc, stdout=yes_out),
             JOURNAL_CONF: make_result(JOURNAL_CONF, stdout=journal_conf),
             JOURNAL_DIR: make_result(JOURNAL_DIR, stdout="directory\n"),
             ID_ALICE: make_result(ID_ALICE, stdout="1234\n"),
@@ -342,7 +339,7 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "320/320" in out and "PASS" in out
+    assert "310/310" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
@@ -353,7 +350,7 @@ def test_check_all_with_failure() -> None:
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "60/320" in out and "FAIL" in out
+    assert "60/310" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -474,7 +471,7 @@ def test_check_container_tasks_ok_and_ko() -> None:
 
 
 def test_check_process_and_journal_tasks_ok_and_ko() -> None:
-    for task_id in ("prc-01", "prc-02", "log-01"):
+    for task_id in ("prc-01", "log-01"):
         code, out, _ = run_cli(["check", task_id], make_runner())
         assert code == 0 and f"[OK] {task_id}" in out
         code, out, _ = run_cli(["check", task_id], make_runner(procs_ok=False))

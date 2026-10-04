@@ -8,7 +8,7 @@ from rhcsa_sim.testing import FakeCommandRunner, make_result
 
 
 def ps_cmd(comm: str = "sshd") -> tuple[str, ...]:
-    return ("ps", "-C", comm, "-o", "pid=,ni=,user:32=,comm=")
+    return ("ps", "-C", comm, "-o", "pid=,ni=,user:32=,stat=,comm=")
 
 
 def runner(
@@ -20,8 +20,8 @@ def runner(
     )
 
 
-ONE = "    899   0 root     sshd\n"
-TWO = "    899   0 root     sshd\n   1500   5 alice    sshd\n"
+ONE = "    899   0 root     Ss   sshd\n"
+TWO = "    899   0 root     Ss   sshd\n   1500   5 alice    SN   sshd\n"
 
 
 def test_checks_satisfy_protocol() -> None:
@@ -69,7 +69,7 @@ def test_running_with_nice_and_user_ok() -> None:
 
 
 def test_running_negative_nice() -> None:
-    out = "  10 -5 root     sshd\n"
+    out = "  10 -5 root     S    sshd\n"
     assert ProcessRunning(runner(out), "sshd", nice=-5).run().passed
 
 
@@ -90,7 +90,7 @@ def test_running_all_matching_must_satisfy() -> None:
     assert ProcessRunning(runner(ONE + ONE), "sshd", nice=0).run().passed
 
 
-@pytest.mark.parametrize("out", ["garbage\n", "1 2 3\n", "x 0 root sshd\n", "1 - root sshd\n"])
+@pytest.mark.parametrize("out", ["garbage\n", "1 2 3\n", "1 2 3 4\n", "x 0 root S sshd\n", "1 - root S sshd\n"])
 def test_running_unexpected_output(out: str) -> None:
     result = ProcessRunning(runner(out), "sshd", nice=0).run()
     assert not result.passed and "unexpected" in result.detail
@@ -117,3 +117,27 @@ def test_not_running_ps_failure() -> None:
 
 def test_not_running_rc0_empty_passes() -> None:
     assert ProcessNotRunning(runner(""), "sshd").run().passed
+
+
+ZOMBIE = "   1234   0 root     Z    sshd <defunct>\n"
+
+
+def test_zombie_line_is_parsed_with_spaces_in_comm() -> None:
+    result = ProcessNotRunning(runner(ZOMBIE), "sshd").run()
+    assert result.passed and "unexpected" not in result.detail
+
+
+def test_not_running_ignores_zombies_but_reports_live_ones() -> None:
+    assert ProcessNotRunning(runner(ZOMBIE), "sshd").run().passed
+    result = ProcessNotRunning(runner(ZOMBIE + ONE), "sshd").run()
+    assert not result.passed and "899" in result.detail and "1234" not in result.detail
+
+
+def test_running_only_zombies_is_not_running() -> None:
+    result = ProcessRunning(runner(ZOMBIE), "sshd").run()
+    assert not result.passed and "not running" in result.detail
+
+
+def test_running_ignores_zombie_when_checking_nice_and_user() -> None:
+    out = "   1234   7 alice    Z    sshd <defunct>\n" + ONE
+    assert ProcessRunning(runner(out), "sshd", nice=0, user="root").run().passed

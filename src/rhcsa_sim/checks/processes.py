@@ -38,9 +38,10 @@ class _Proc:
 
 
 def _list_processes(runner: CommandRunner, comm: str) -> list[_Proc] | CheckResult:
-    """Procesos con ese `comm` exacto. rc 1 y salida vacia = ninguno."""
+    """Procesos vivos con ese `comm` exacto (los zombies se ignoran). rc 1 y
+    salida vacia = ninguno."""
     # user:32 evita que ps sustituya nombres largos por el uid
-    result = runner.run(["ps", "-C", comm, "-o", "pid=,ni=,user:32=,comm="])
+    result = runner.run(["ps", "-C", comm, "-o", "pid=,ni=,user:32=,stat=,comm="])
     if result.returncode == 1 and not result.stdout.strip():
         return []
     if not result.ok:
@@ -51,10 +52,13 @@ def _list_processes(runner: CommandRunner, comm: str) -> list[_Proc] | CheckResu
     for line in result.stdout.splitlines():
         if not line.strip():
             continue
-        fields = line.split()
-        if len(fields) != 4:
+        # comm puede contener espacios (un zombie sale como "sshd <defunct>")
+        fields = line.split(maxsplit=4)
+        if len(fields) != 5:
             return CheckResult(False, _UNEXPECTED)
-        pid, ni, user, _comm = fields
+        pid, ni, user, state, _comm = fields
+        if state.startswith("Z"):
+            continue  # zombie: ya termino, solo espera a que su padre lo recoja
         try:
             procs.append(_Proc(str(int(pid)), int(ni), user))
         except ValueError:

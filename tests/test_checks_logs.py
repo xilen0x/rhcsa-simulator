@@ -5,7 +5,7 @@ from rhcsa_sim.models import Check
 from rhcsa_sim.testing import FakeCommandRunner, make_result
 
 CAT = ("systemd-analyze", "cat-config", "systemd/journald.conf")
-STAT = ("stat", "-c", "%F", "--", "/var/log/journal")
+STAT = ("stat", "-L", "-c", "%F", "--", "/var/log/journal")
 
 MAIN = "# /etc/systemd/journald.conf\n#  Storage=auto\n[Journal]\n#Storage=auto\n"
 DROPIN = "\n# /etc/systemd/journald.conf.d/99-persistent.conf\n[Journal]\nStorage=persistent\nSystemMaxUse=200MB\n"

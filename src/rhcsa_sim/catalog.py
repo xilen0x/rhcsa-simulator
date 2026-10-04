@@ -28,7 +28,7 @@ from rhcsa_sim.checks.network import (
     ConnectionStaticIpv4,
     HostnameIs,
 )
-from rhcsa_sim.checks.processes import ProcessNotRunning, ProcessRunning
+from rhcsa_sim.checks.processes import ProcessRunning
 from rhcsa_sim.checks.scripts import (
     FileContainsLine,
     FileIsExecutable,
@@ -411,16 +411,6 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(ProcessRunning(runner, "crond", nice=10, user="root"),),
-            ),
-            Task(
-                id="prc-02",
-                block=ObjectiveBlock.RUNNING_SYSTEMS,
-                description=(
-                    "Un proceso yes descontrolado esta consumiendo toda la CPU: localizalo "
-                    "y terminalo para que no quede ninguna instancia en ejecucion."
-                ),
-                points=10,
-                checks=(ProcessNotRunning(runner, "yes"),),
             ),
             Task(
                 id="log-01",
