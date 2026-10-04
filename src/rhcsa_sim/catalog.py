@@ -3,6 +3,15 @@ from __future__ import annotations
 from rhcsa_sim.checks._units import MIB
 from rhcsa_sim.checks.acl import PathHasAclEntry
 from rhcsa_sim.checks.blockdev import PartitionExists, SwapActive, SwapInFstabByUuid
+from rhcsa_sim.checks.containers import (
+    ContainerHasBindMount,
+    ContainerImageExists,
+    ContainerPublishesPort,
+    ContainerRunning,
+    LingerEnabled,
+    QuadletUnitDefined,
+    UserServiceActive,
+)
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
@@ -52,6 +61,11 @@ from rhcsa_sim.runner import CommandRunner
 
 # Hostname compartido por net-02 y scr-01.
 LAB_HOSTNAME = "servera.lab.example.com"
+
+# Contenedores rootless de con-01..con-03: usuario e imagen (servidor httpd que escucha en
+# el 8080 interno) compartidos por las tres tareas.
+CONTAINER_USER = "alice"
+CONTAINER_IMAGE = "registry.access.redhat.com/ubi10/httpd-24"
 
 
 def build_catalog(runner: CommandRunner) -> TaskRegistry:
@@ -337,6 +351,51 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                     ScriptHasShebang(runner, "/usr/local/bin/sysinfo.sh", "/bin/bash"),
                     ScriptSyntaxValid(runner, "/usr/local/bin/sysinfo.sh"),
                     FileContainsLine(runner, "/root/sysinfo.txt", LAB_HOSTNAME),
+                ),
+            ),
+            Task(
+                id="con-01",
+                block=ObjectiveBlock.CONTAINERS,
+                description=(
+                    f"Como usuario {CONTAINER_USER} (podman rootless), descarga la imagen "
+                    f"{CONTAINER_IMAGE}."
+                ),
+                points=10,
+                checks=(ContainerImageExists(runner, CONTAINER_USER, CONTAINER_IMAGE),),
+            ),
+            Task(
+                id="con-02",
+                block=ObjectiveBlock.CONTAINERS,
+                description=(
+                    f"Como usuario {CONTAINER_USER}, ejecuta un contenedor llamado web a partir "
+                    f"de {CONTAINER_IMAGE}, publicando el puerto 8080 del host en el 8080 del "
+                    "contenedor y montando /srv/web del host en /var/www/html."
+                ),
+                points=10,
+                checks=(
+                    ContainerRunning(runner, CONTAINER_USER, "web", CONTAINER_IMAGE),
+                    ContainerPublishesPort(runner, CONTAINER_USER, "web", 8080, 8080),
+                    ContainerHasBindMount(
+                        runner, CONTAINER_USER, "web", "/srv/web", "/var/www/html"
+                    ),
+                ),
+            ),
+            Task(
+                id="con-03",
+                block=ObjectiveBlock.CONTAINERS,
+                description=(
+                    f"Haz que el contenedor web de {CONTAINER_USER} arranque con el sistema: "
+                    "define la unidad Quadlet web.container (imagen "
+                    f"{CONTAINER_IMAGE}, WantedBy=default.target), deja activo el servicio "
+                    "de usuario web.service y habilita linger."
+                ),
+                points=10,
+                checks=(
+                    QuadletUnitDefined(
+                        runner, CONTAINER_USER, "web", CONTAINER_IMAGE, "default.target"
+                    ),
+                    UserServiceActive(runner, CONTAINER_USER, "web.service"),
+                    LingerEnabled(runner, CONTAINER_USER),
                 ),
             ),
         ]

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 import pytest
 
 from rhcsa_sim.cli import main
+from rhcsa_sim.runner import CommandResult
 from rhcsa_sim.testing import FakeCommandRunner, make_result
 
 GROUP = ("getent", "group", "devs")
@@ -116,6 +117,28 @@ SCRIPT_STAT = ("stat", "-c", "%a %F", "--", SCRIPT)
 SCRIPT_HEAD = ("head", "-n", "1", "--", SCRIPT)
 SCRIPT_SYNTAX = ("bash", "-n", "--", SCRIPT)
 SYSINFO_GREP = ("grep", "-Fxq", "--", HOSTNAME, "/root/sysinfo.txt")
+CONTAINER_IMAGE = "registry.access.redhat.com/ubi10/httpd-24"
+ID_ALICE = ("id", "-u", "--", "alice")
+PODMAN = ("runuser", "-u", "alice", "--", "env", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
+LINGER = ("stat", "-c", "%F", "--", "/var/lib/systemd/linger/alice")
+IMAGE_EXISTS = (*PODMAN, "image", "exists", "--", CONTAINER_IMAGE)
+PODMAN_PS = (*PODMAN, "ps", "-a", "--format", "json")
+PODMAN_PORTS = (*PODMAN, "inspect", "--format", "{{json .HostConfig.PortBindings}}", "--", "web")
+PODMAN_MOUNTS = (*PODMAN, "inspect", "--format", "{{json .Mounts}}", "--", "web")
+QUADLET_CAT = ("cat", "--", "/home/alice/.config/containers/systemd/web.container")
+USER_SHOW = (
+    "systemctl", "--user", "-M", "alice@", "show", "-p", "LoadState,ActiveState", "--",
+    "web.service",
+)  # fmt: skip
+PS_OUT = f'[{{"Names": ["web"], "Image": "{CONTAINER_IMAGE}:latest", "State": "running"}}]'
+PORTS_OUT = '{"8080/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]}'
+MOUNTS_OUT = (
+    '[{"Type": "bind", "Source": "/srv/web", "Destination": "/var/www/html", "RW": true}]'
+)
+QUADLET_OUT = (
+    f"[Container]\nImage={CONTAINER_IMAGE}\nPublishPort=8080:8080\n"
+    "Volume=/srv/web:/var/www/html:Z\n\n[Install]\nWantedBy=default.target\n"
+)
 CRON_OUT = "MAILTO=root\n30 14 * * * /usr/bin/date\n"
 ACL_OUT = "user::rwx\nuser:alice:rwx\ngroup::r-x\nmask::rwx\nother::---\n"
 
@@ -142,6 +165,7 @@ def make_runner(
     repo_status: str = "disabled",
     tuned_profile: str = "virtual-guest",
     script_rc: int = 0,
+    container_rc: int = 0,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -177,6 +201,16 @@ def make_runner(
     cron_err = "must be privileged to use -u\n" if root_rc else ""
     # script ausente: stat/bash -n/head fallan; grep sale con 2 (fichero inexistente)
     script_out = "755 regular file\n" if script_rc == 0 else ""
+    # sin root, runuser/cat/systemctl --user fallan; rc 1 en podman = imagen ausente
+    runuser_err = "runuser: may not be used by non-root users\n" if root_rc else ""
+    cat_err = "cat: Permission denied\n" if root_rc else ""
+    user_err = "Access denied\n" if root_rc else ""
+
+    def podman_result(args: tuple[str, ...], stdout: str) -> CommandResult:
+        if root_rc:
+            return make_result(args, returncode=1, stderr=runuser_err)
+        return make_result(args, returncode=container_rc, stdout="" if container_rc else stdout)
+
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
         {
@@ -233,6 +267,20 @@ def make_runner(
             ),
             SCRIPT_SYNTAX: make_result(SCRIPT_SYNTAX, returncode=127 if script_rc else 0),
             SYSINFO_GREP: make_result(SYSINFO_GREP, returncode=2 if script_rc else 0),
+            ID_ALICE: make_result(ID_ALICE, stdout="1234\n"),
+            LINGER: make_result(LINGER, returncode=container_rc, stdout="regular empty file\n"),
+            IMAGE_EXISTS: podman_result(IMAGE_EXISTS, ""),
+            PODMAN_PS: podman_result(PODMAN_PS, PS_OUT),
+            PODMAN_PORTS: podman_result(PODMAN_PORTS, PORTS_OUT),
+            PODMAN_MOUNTS: podman_result(PODMAN_MOUNTS, MOUNTS_OUT),
+            QUADLET_CAT: make_result(
+                QUADLET_CAT, returncode=root_rc or container_rc, stderr=cat_err,
+                stdout="" if root_rc or container_rc else QUADLET_OUT,
+            ),
+            USER_SHOW: make_result(
+                USER_SHOW, returncode=root_rc or container_rc, stderr=user_err,
+                stdout="" if root_rc or container_rc else "LoadState=loaded\nActiveState=active\n",
+            ),
             SESTATUS: make_result(SESTATUS, stdout=sestatus_out),
             SE_RULE: make_result(SE_RULE, stdout=SE_CONTEXT),
             SE_STAT: make_result(SE_STAT, stdout=SE_CONTEXT),
@@ -278,17 +326,18 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "260/260" in out and "PASS" in out
+    assert "290/290" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
         group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
         net_method="auto", running_hostname="localhost", root_rc=1, script_rc=1,
+        container_rc=1,
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "60/260" in out and "FAIL" in out
+    assert "60/290" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -396,6 +445,16 @@ def test_check_script_task_ok_and_ko() -> None:
     assert code == 0 and "[OK] scr-01" in out
     code, out, _ = run_cli(["check", "scr-01"], make_runner(script_rc=1))
     assert code == 1 and "[KO] scr-01" in out and "cannot stat" in out
+
+
+def test_check_container_tasks_ok_and_ko() -> None:
+    for task_id in ("con-01", "con-02", "con-03"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+        code, out, _ = run_cli(["check", task_id], make_runner(root_rc=1))
+        assert code == 1 and f"[KO] {task_id}" in out and "sudo" in out
+    code, out, _ = run_cli(["check", "con-02"], make_runner(container_rc=1))
+    assert code == 1 and "[KO] con-02" in out
 
 
 def test_check_requires_exactly_one_selector() -> None:
