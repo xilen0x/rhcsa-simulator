@@ -18,7 +18,7 @@ A virtualenv already exists at `.venv` with the package installed in editable mo
 .venv/bin/rhcsa-sim list | show <id> | check <id> | check --all
 ```
 
-Storage (LVM), firewalld, script checks on /root paths, `semanage` (SELinux booleans/ports) and sshd/sudo (`sshd -T`, `visudo -c`, `sudo -n -l -U`) checks need root: in the VM run `sudo .venv/bin/rhcsa-sim check ...`. They stay read-only (`vgs`/`pvs`/`lvs`, `firewall-cmd --query-*`); without root they fail with exit 5 and a hint.
+Storage (LVM), firewalld, `semanage` (SELinux booleans/ports), sshd/sudo (`sshd -T`, `visudo -c`, `sudo -n -l -U`), rootless podman/Quadlet/linger checks for another user, `crontab -l -u` for other users, and any check on /root paths (scripts, archives, links, saved grep output) need root: in the VM run `sudo .venv/bin/rhcsa-sim check ...`. They stay read-only (`vgs`/`pvs`/`lvs`, `firewall-cmd --query-*`); without root the check fails with a hint (e.g. LVM tools exit 5, `file` reports "cannot open") and the CLI exits 1 like any failed task.
 
 CLI exit codes: `0` all checked tasks passed, `1` at least one failed, `2` usage error / unknown task.
 
