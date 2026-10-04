@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from posixpath import basename
 
@@ -126,3 +127,55 @@ class FileContainsLine:
         if "Permission denied" in result.stderr:
             return CheckResult(False, f"cannot read '{self.path}': {_ROOT_HINT}")
         return CheckResult(False, f"cannot read '{self.path}'")
+
+
+# Construcciones reconocidas por ScriptUsesConstructs (regex sobre lineas sin comentarios).
+_CONSTRUCT_PATTERNS: dict[str, re.Pattern[str]] = {
+    "if": re.compile(r"\bif\b|\[\[|\btest\b"),
+    "for": re.compile(r"\bfor\s+\w+\s+in\b|\bfor\s*\(\("),
+    "args": re.compile(r"\$[1-9]|\$\{[1-9]|\$[@*#]"),
+    "cmdsubst": re.compile(r"\$\((?!\()|`"),
+}
+# Comentario: '#' al inicio de linea o precedido de espacio (asi `$#` y `${#x}` se conservan).
+_TRAILING_COMMENT_RE = re.compile(r"(?:^|\s)#.*$")
+
+
+def _strip_comments(text: str) -> str:
+    return "\n".join(_TRAILING_COMMENT_RE.sub("", line) for line in text.splitlines())
+
+
+@dataclass(frozen=True, slots=True)
+class ScriptUsesConstructs:
+    """Analisis estatico (regex, nunca ejecuta el script): el script usa cada construccion
+    pedida entre "if", "for", "args" y "cmdsubst".
+
+    Limitacion: se ignoran comentarios, pero no se distinguen cadenas ni heredocs; un
+    `if` dentro de un echo cuenta.
+    """
+
+    runner: CommandRunner
+    path: str
+    constructs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        validate_absolute_path(self.path)
+        if not self.constructs:
+            raise ValueError("at least one construct is required")
+        for name in self.constructs:
+            if name not in _CONSTRUCT_PATTERNS:
+                raise ValueError(f"unknown script construct: {name!r}")
+
+    def describe(self) -> str:
+        return f"{self.path} uses: {', '.join(self.constructs)}"
+
+    def run(self) -> CheckResult:
+        result = self.runner.run(["cat", "--", self.path])
+        if not result.ok:
+            if "Permission denied" in result.stderr:
+                return CheckResult(False, f"cannot read '{self.path}': {_ROOT_HINT}")
+            return CheckResult(False, f"cannot read '{self.path}'")
+        code = _strip_comments(result.stdout)
+        missing = [n for n in self.constructs if not _CONSTRUCT_PATTERNS[n].search(code)]
+        if missing:
+            return CheckResult(False, f"missing constructs: {', '.join(missing)}")
+        return CheckResult(True, f"uses {', '.join(self.constructs)}")

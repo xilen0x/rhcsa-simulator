@@ -7,8 +7,9 @@ from rhcsa_sim.checks.scripts import (
     FileIsExecutable,
     ScriptHasShebang,
     ScriptSyntaxValid,
+    ScriptUsesConstructs,
 )
-from rhcsa_sim.models import Check
+from rhcsa_sim.models import Check, CheckResult
 from rhcsa_sim.testing import FakeCommandRunner, make_result
 
 PATH = "/usr/local/bin/sysinfo.sh"
@@ -191,3 +192,96 @@ def test_never_executes_the_script() -> None:
         assert argv[0] in {"stat", "head", "bash", "grep"}
         if argv[0] == "bash":
             assert argv[1:3] == ("-n", "--")
+
+
+# --- ScriptUsesConstructs (analisis estatico, nunca ejecuta el script) ---
+
+CAT_CMD = ("cat", "--", PATH)
+FULL_SCRIPT = """#!/bin/bash
+# comprueba usuarios
+for u in "$@"; do
+    if id "$u" >/dev/null 2>&1; then
+        echo "$u exists: uid $(id -u "$u")"
+    else
+        echo "$u missing"
+    fi
+done
+"""
+
+
+def uses(content: str, constructs: tuple[str, ...], rc: int = 0) -> CheckResult:
+    return ScriptUsesConstructs(fake(CAT_CMD, rc, stdout=content), PATH, constructs).run()
+
+
+def test_constructs_ok_all() -> None:
+    result = uses(FULL_SCRIPT, ("if", "for", "args", "cmdsubst"))
+    assert result.passed
+
+
+@pytest.mark.parametrize(
+    ("line", "construct"),
+    [
+        ("if true; then :; fi", "if"),
+        ("[[ -n $x ]] && echo y", "if"),
+        ("test -f /etc/hosts", "if"),
+        ("for x in a b; do :; done", "for"),
+        ("for ((i=0;i<3;i++)); do :; done", "for"),
+        ("echo $1", "args"),
+        ('echo "${2}"', "args"),
+        ('echo "$@"', "args"),
+        ("echo $*", "args"),
+        ("echo $#", "args"),
+        ("x=$(date)", "cmdsubst"),
+        ("x=`date`", "cmdsubst"),
+    ],
+)
+def test_constructs_each_detected(line: str, construct: str) -> None:
+    assert uses(line + "\n", (construct,)).passed
+
+
+@pytest.mark.parametrize(
+    ("line", "construct"),
+    [
+        ("echo hello", "if"),
+        ("echo notif", "if"),
+        ("echo forever in time", "for"),
+        ("echo $HOME $0", "args"),
+        ("x=$((1+2))", "cmdsubst"),
+        ("echo hola", "cmdsubst"),
+    ],
+)
+def test_constructs_each_not_detected(line: str, construct: str) -> None:
+    assert not uses(line + "\n", (construct,)).passed
+
+
+def test_constructs_ko_lists_missing() -> None:
+    result = uses("#!/bin/bash\necho hi\n", ("if", "for", "args", "cmdsubst"))
+    assert not result.passed
+    for name in ("if", "for", "args", "cmdsubst"):
+        assert name in result.detail
+
+
+def test_constructs_ignores_comments() -> None:
+    script = "#!/bin/bash\n# if for $1 $(x)\n   # for x in y\necho hi # if $1 $(date)\n"
+    result = uses(script, ("if", "for", "args", "cmdsubst"))
+    assert not result.passed
+
+
+def test_constructs_keeps_hash_inside_expansion() -> None:
+    # $# no es un comentario
+    assert uses("echo $#\n", ("args",)).passed
+
+
+def test_constructs_unreadable() -> None:
+    result = uses("", ("if",), rc=1)
+    assert not result.passed and "cannot read" in result.detail
+
+
+def test_constructs_rejects_invalid_input() -> None:
+    runner = fake(CAT_CMD)
+    with pytest.raises(ValueError):
+        ScriptUsesConstructs(runner, PATH, ("while",))
+    with pytest.raises(ValueError):
+        ScriptUsesConstructs(runner, PATH, ())
+    with pytest.raises(ValueError):
+        ScriptUsesConstructs(runner, "relative.sh", ("if",))
