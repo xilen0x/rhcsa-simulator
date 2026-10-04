@@ -106,7 +106,5 @@ class FilesIdentical:
             return CheckResult(True, "files are identical")
         if result.returncode == 1:
             return CheckResult(False, f"content differs from {self.source}")
-        return CheckResult(
-            False,
-            f"cannot compare: {self.copy} missing or unreadable (paths under /root need sudo)",
-        )
+        hint = " (paths under /root need sudo)" if self.copy.startswith("/root/") else ""
+        return CheckResult(False, f"cannot compare: {self.copy} missing or unreadable{hint}")

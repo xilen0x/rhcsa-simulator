@@ -84,6 +84,15 @@ def test_files_identical_missing_or_unreadable() -> None:
         assert "sudo" in result.detail
 
 
+def test_files_identical_no_sudo_hint_outside_root() -> None:
+    other = "/srv/services.bak"
+    runner = FakeCommandRunner({("cmp", "-s", "--", SRC, other): make_result(
+        ("cmp", "-s", "--", SRC, other), returncode=2
+    )})
+    result = FilesIdentical(runner, SRC, other).run()
+    assert result.detail == f"cannot compare: {other} missing or unreadable"
+
+
 def test_files_identical_describe_and_validation() -> None:
     assert FilesIdentical(cmp_runner(0), SRC, COPY).describe() == f"{COPY} is identical to {SRC}"
     with pytest.raises(ValueError):
