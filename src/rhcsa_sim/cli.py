@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from typing import TextIO
 
@@ -18,6 +19,7 @@ from rhcsa_sim.reporter import (
     should_use_color,
 )
 from rhcsa_sim.runner import CommandRunner, SubprocessRunner
+from rhcsa_sim.timer import ExamClock
 from rhcsa_sim.ui import Ui, supports_unicode
 
 EXIT_OK = 0
@@ -124,7 +126,10 @@ def main(
             return line
 
         clear_screen = out.isatty() and environ.get("TERM") != "dumb"
-        return run_session(registry, ui, read, out, clear_screen=clear_screen)
+        clock = ExamClock(started=time.monotonic())
+        return run_session(
+            registry, ui, read, out, clear_screen=clear_screen, clock=clock
+        )
     if command == "list":
         return _cmd_list(registry, out)
     if command == "show":

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 import textwrap
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TextIO
@@ -13,6 +15,7 @@ from rhcsa_sim.reporter import (
     calculate_score,
     sanitize_text,
 )
+from rhcsa_sim.timer import CornerTicker, ExamClock, format_clock, render_timer
 from rhcsa_sim.ui import Ui
 
 BOX_WIDTH = 76
@@ -32,6 +35,7 @@ _HELP = (
     ("l", "list all tasks with status and progress"),
     ("s", "show the current task again"),
     ("h / ?", "this help"),
+    ("timer", "3-hour exam countdown, top-right corner"),
     ("q", "quit"),
 )
 
@@ -189,7 +193,9 @@ def render_help(ui: Ui) -> str:
     return "\n".join(f"  {ui.bold(f'{key:<16}')}{text}" for key, text in _HELP)
 
 
-def dispatch(state: SessionState, ui: Ui, line: str) -> Reply:
+def dispatch(
+    state: SessionState, ui: Ui, line: str, *, clock: ExamClock | None = None
+) -> Reply:
     """Interpreta una linea del usuario, actualiza el estado y devuelve el texto."""
     command = line.strip().lower()
     if command in ("", "n"):
@@ -220,9 +226,10 @@ def dispatch(state: SessionState, ui: Ui, line: str) -> Reply:
         return Reply("\n".join(parts))
     if command == "q":
         earned, total = state.graded_score()
+        used = f" Time used {format_clock(clock.elapsed())}." if clock else ""
         return Reply(
             f"Bye! Session score: {earned}/{total} "
-            f"(graded {len(state.results)}/{len(state.tasks)}).",
+            f"(graded {len(state.results)}/{len(state.tasks)}).{used}",
             quit=True,
         )
     if state.jump(command):
@@ -241,31 +248,60 @@ def run_session(
     out: TextIO,
     *,
     clear_screen: bool = False,
+    clock: ExamClock | None = None,
 ) -> int:
     """Bucle de lectura: EOF y Ctrl+C terminan limpiamente con codigo 0.
 
     Con clear_screen, cada vista de tarea reemplaza la pantalla anterior; el menu
-    de comandos se muestra siempre debajo de cada respuesta."""
+    de comandos se muestra siempre debajo de cada respuesta. Con clear_screen y un
+    reloj, la cuenta regresiva se dibuja en la esquina superior derecha; toda
+    escritura comparte un lock con el hilo del reloj para no mezclar secuencias."""
     state = SessionState(registry.all())
     if not state.tasks:
         out.write("No tasks available.\n")
         return 0
+    lock = threading.Lock()
+    ticker: CornerTicker | None = None
+    if clear_screen and clock is not None:
+        ticker = CornerTicker(
+            out,
+            lock,
+            lambda: render_timer(clock, ui),
+            lambda: shutil.get_terminal_size().columns,
+        )
+
+    def emit(text: str, flush: bool = False) -> None:
+        with lock:
+            out.write(text)
+            if flush:
+                out.flush()
+
+    def clear() -> None:
+        # La fila 1 queda reservada para el reloj.
+        emit(CLEAR_SCREEN + "\n")
+        if ticker is not None:
+            ticker.draw()
+
     bar = render_command_bar(ui) + "\n"
     if clear_screen:
-        out.write(CLEAR_SCREEN)
-    out.write(render_banner(state, ui) + "\n")
-    out.write(render_task(state, ui) + "\n" + bar)
+        clear()
+    emit(render_banner(state, ui) + "\n")
+    emit(render_task(state, ui) + "\n" + bar)
+    if ticker is not None:
+        ticker.start()
     try:
         while True:
-            out.write(PROMPT)
-            out.flush()
-            reply = dispatch(state, ui, read())
+            emit(PROMPT, flush=True)
+            reply = dispatch(state, ui, read(), clock=clock)
             if reply.clear and clear_screen:
-                out.write(CLEAR_SCREEN)
-            out.write(reply.text + "\n")
+                clear()
+            emit(reply.text + "\n")
             if reply.quit:
                 break
-            out.write(bar)
+            emit(bar)
     except (EOFError, KeyboardInterrupt):
-        out.write("\n")
+        emit("\n")
+    finally:
+        if ticker is not None:
+            ticker.stop()
     return 0

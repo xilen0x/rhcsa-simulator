@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import io
 
-from rhcsa_sim.interactive import PROMPT, SessionState, dispatch, run_session
+from rhcsa_sim.interactive import (
+    CLEAR_SCREEN,
+    PROMPT,
+    SessionState,
+    dispatch,
+    render_help,
+    run_session,
+)
 from rhcsa_sim.models import CheckResult, ObjectiveBlock, Task
 from rhcsa_sim.registry import TaskRegistry
+from rhcsa_sim.timer import ExamClock
 from rhcsa_sim.ui import Ui
 
 
@@ -272,3 +280,46 @@ def test_no_clear_sequence_when_disabled() -> None:
     _, out = session(["n", "c", "q"], tasks)
     assert CLEAR not in out
     assert out.count(BAR) == 3
+
+
+def timed_session(
+    lines: list[str], clear_screen: bool, clock: ExamClock | None
+) -> str:
+    tasks, _ = make_tasks()
+    feed = iter(lines)
+
+    def read() -> str:
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    out = io.StringIO()
+    run_session(
+        TaskRegistry(tasks), PLAIN, read, out, clear_screen=clear_screen, clock=clock
+    )
+    return out.getvalue()
+
+
+def fixed_clock() -> ExamClock:
+    return ExamClock(started=0.0, now=lambda: 0.0)
+
+
+def test_timer_drawn_after_clear_with_reserved_line() -> None:
+    text = timed_session(["n", "q"], True, fixed_clock())
+    assert "Time left 03:00:00" in text
+    assert CLEAR_SCREEN + "\n" in text
+    assert "Time used 00:00:00." in text
+
+
+def test_no_timer_without_clock_or_clear_screen() -> None:
+    for text in (
+        timed_session(["q"], True, None),
+        timed_session(["q"], False, fixed_clock()),
+    ):
+        assert "Time left" not in text
+    assert "Time used" not in timed_session(["q"], True, None)
+
+
+def test_help_mentions_timer() -> None:
+    assert "timer" in render_help(PLAIN)
