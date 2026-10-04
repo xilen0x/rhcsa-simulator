@@ -229,9 +229,9 @@ def dispatch(
     if command == "s":
         return Reply(render_task(state, ui), clear=True)
     if command in ("h", "?"):
-        return Reply(render_help(ui))
+        return Reply(render_help(ui), clear=True)
     if command == "l":
-        return Reply(render_list(state, ui))
+        return Reply(render_list(state, ui), clear=True)
     if command == "c":
         results = evaluate_tasks((state.current,))
         state.remember(results)
@@ -243,7 +243,7 @@ def dispatch(
         state.remember(results)
         parts = [render_compact_result(r, ui) for r in results]
         parts.append(render_score(results, ui))
-        return Reply("\n".join(parts))
+        return Reply("\n".join(parts), clear=True)
     if command == "reset":
         return _reset_exam(state, ui, holder)
     if command == "q":

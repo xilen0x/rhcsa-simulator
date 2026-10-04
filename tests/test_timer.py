@@ -219,3 +219,9 @@ def test_clock_holder_restart_without_path_does_not_save() -> None:
     holder = ClockHolder(ExamClock(started=0.0, now=now), None, now)
     assert holder.restart() is None
     assert holder.clock is not None and holder.clock.started == 100.0
+
+
+def test_elapsed_is_capped_at_exam_duration() -> None:
+    clock = ExamClock(started=0.0, now=lambda: 72 * 3600.0)
+    assert clock.elapsed() == EXAM_SECONDS
+    assert format_clock(clock.elapsed()) == "03:00:00"

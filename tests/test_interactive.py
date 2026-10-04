@@ -269,12 +269,12 @@ def test_menu_follows_every_reply() -> None:
         assert last_line.startswith(BAR)
 
 
-def test_non_navigation_replies_do_not_clear() -> None:
+def test_only_short_notices_do_not_clear() -> None:
     tasks, _ = make_tasks()
     state = SessionState(tasks)
-    for line in ("l", "h", "a", "zz", "p", "99"):
+    for line in ("zz", "p", "99"):
         assert dispatch(state, PLAIN, line).clear is False
-    for line in ("n", "p", "3", "s", "c"):
+    for line in ("n", "p", "3", "s", "c", "l", "h", "?", "a"):
         assert dispatch(state, PLAIN, line).clear is True
 
 

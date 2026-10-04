@@ -42,7 +42,8 @@ class ExamClock:
     now: Callable[[], float] = time.time
 
     def elapsed(self) -> float:
-        return max(0.0, self.now() - self.started)
+        # Tope en la duracion: tras un examen vencido no se informan dias de uso.
+        return min(self.duration, max(0.0, self.now() - self.started))
 
     def remaining(self) -> float:
         return max(0.0, self.duration - self.elapsed())
