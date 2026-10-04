@@ -78,23 +78,6 @@ Opening the menu (`sudo .venv/bin/rhcsa-sim`):
 
 ![rhcsa-sim interactive menu with the exam timer](docs/menu.png)
 
-The same screen as text:
-
-```text
-                                                          Time left 02:41:07
-╭──────────────────────────────────────────────────────────────────────────╮
-│ rhcsa-sim  RHCSA EX200 · RHEL 10                                         │
-│ 49 tasks, 490 points. Type h for help.                                   │
-╰──────────────────────────────────────────────────────────────────────────╯
-╭ Task 1/49 ───────────────────────────────────────────────────────────────╮
-│ users-01  users-groups  10 pts  • pending                                │
-│                                                                          │
-│ Crea el grupo 'devs' con GID 5000.                                       │
-╰──────────────────────────────────────────────────────────────────────────╯
-[Enter] next [p] prev [N|id] jump [c] check [a] all [l] list [h] help [q] quit
->
-```
-
 Grading the current task with `c`:
 
 ```text
