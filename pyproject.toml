@@ -1,8 +1,25 @@
 [project]
 name = "rhcsa-sim"
 version = "0.1.0"
+description = "RHCSA (EX200, RHEL 10) practice checker that grades the live system"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "xilen0x" }]
+keywords = ["rhcsa", "ex200", "rhel", "linux", "exam", "practice"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+]
 requires-python = ">=3.12"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/xilen0x/rhcsa-simulator"
+Issues = "https://github.com/xilen0x/rhcsa-simulator/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "mypy>=1.10"]

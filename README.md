@@ -82,3 +82,20 @@ Adding a task:
 3. Test it with `rhcsa_sim.testing.FakeCommandRunner`, using real command output captured on a RHEL 10 machine as fixtures.
 
 `CLAUDE.md` describes the architecture and conventions in more detail.
+
+## Contributing
+
+Issues and pull requests are welcome. Before opening a PR:
+
+- [ ] `.venv/bin/pytest` passes and `.venv/bin/mypy src tests` is clean.
+- [ ] New checks are read-only and tested with `FakeCommandRunner`.
+- [ ] Test fixtures come from real command output on RHEL 10 (say so in the PR if you could only derive them).
+- [ ] New tasks map to an objective on the [official EX200 page](https://www.redhat.com/en/services/training/ex200-red-hat-certified-system-administrator-rhcsa-exam).
+
+## License
+
+[MIT](LICENSE).
+
+## Disclaimer
+
+This is an independent, unofficial study tool. It is not affiliated with, endorsed by or sponsored by Red Hat, Inc. Red Hat, RHEL, RHCSA and EX200 are trademarks or registered trademarks of Red Hat, Inc. The tasks are original practice exercises based on the public exam objectives; they are not real exam questions. Passing here does not guarantee passing the real exam.
