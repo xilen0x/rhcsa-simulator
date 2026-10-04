@@ -3,6 +3,7 @@ from __future__ import annotations
 from rhcsa_sim.checks._units import MIB
 from rhcsa_sim.checks.acl import PathHasAclEntry
 from rhcsa_sim.checks.blockdev import PartitionExists, SwapActive, SwapInFstabByUuid
+from rhcsa_sim.checks.boot import KernelArgPresent
 from rhcsa_sim.checks.essentials import (
     ArchiveContains,
     GrepOutputSaved,
@@ -515,6 +516,16 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                     UnitFileStateIs(runner, "chronyd.service", "enabled"),
                     UnitActiveStateIs(runner, "chronyd.service", "active"),
                 ),
+            ),
+            Task(
+                id="dep-03",
+                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                description=(
+                    "Modifica el gestor de arranque para que todos los kernels arranquen con "
+                    "el argumento systemd.show_status=1 (grubby)."
+                ),
+                points=10,
+                checks=(KernelArgPresent(runner, "systemd.show_status=1"),),
             ),
         ]
     )

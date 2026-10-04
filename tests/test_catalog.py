@@ -12,7 +12,7 @@ def test_catalog_has_expected_well_formed_tasks() -> None:
     ids += ["scr-01", "scr-02"]
     ids += ["prc-01", "log-01", "run-01"]
     ids += ["ess-01", "ess-02", "ess-03"]
-    ids += ["dep-01", "dep-02"]
+    ids += ["dep-01", "dep-02", "dep-03"]
     assert [t.id for t in tasks] == ids
     assert all(t.points > 0 and t.checks for t in tasks)
     assert len({t.id for t in tasks}) == len(tasks)
@@ -46,7 +46,7 @@ def test_manage_software_block_and_no_containers() -> None:
 
 def test_catalog_totals() -> None:
     tasks = build_catalog(FakeCommandRunner({})).all()
-    assert (len(tasks), sum(t.points for t in tasks)) == (39, 390)
+    assert (len(tasks), sum(t.points for t in tasks)) == (40, 400)
 
 
 def test_deploy_timer_and_time_service_tasks() -> None:
@@ -59,3 +59,12 @@ def test_deploy_timer_and_time_service_tasks() -> None:
     assert "OnCalendar=daily" in tasks["dep-01"].description
     assert "classroom.example.com" in tasks["dep-02"].description
     assert len(tasks["dep-01"].checks) == 3 and len(tasks["dep-02"].checks) == 3
+
+
+def test_deploy_bootloader_task() -> None:
+    from rhcsa_sim.models import ObjectiveBlock
+
+    task = {t.id: t for t in build_catalog(FakeCommandRunner({})).all()}["dep-03"]
+    assert task.block is ObjectiveBlock.DEPLOY_MAINTAIN and task.points == 10
+    assert "systemd.show_status=1" in task.description and "grubby" in task.description
+    assert len(task.checks) == 1

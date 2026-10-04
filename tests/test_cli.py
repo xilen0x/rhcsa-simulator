@@ -122,6 +122,7 @@ SHOW_CHRONYD = (
 )  # fmt: skip
 TIMER_CAL = ("systemctl", "show", "--property=TimersCalendar", "--value", "--", "backup.timer")
 CHRONY_CONF = ("cat", "--", "/etc/chrony.conf")
+GRUBBY = ("grubby", "--info=ALL")
 CRON_ALICE = ("crontab", "-l", "-u", "alice")
 TUNED = ("tuned-adm", "active")
 SCRIPT = "/usr/local/bin/sysinfo.sh"
@@ -185,6 +186,7 @@ def make_runner(
     copy_rc: int = 0,
     chrony_host: str = "classroom.example.com",
     timer_calendar: str = "*-*-* 00:00:00",
+    boot_arg: str = "systemd.show_status=1",
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -287,6 +289,15 @@ def make_runner(
             CHRONY_CONF: make_result(
                 CHRONY_CONF, stdout=f"driftfile /var/lib/chrony/drift\nserver {chrony_host} iburst\n"
             ),
+            GRUBBY: make_result(
+                GRUBBY,
+                stdout="" if root_rc else "".join(
+                    f'index={i}\nkernel="/boot/vmlinuz-{i}"\nargs="ro audit=0 {boot_arg}"\n'
+                    f'title="Kernel {i}"\n'
+                    for i in range(3)
+                ),
+                stderr="grep: /boot/grub2/grubenv: Permission denied\n" if root_rc else "",
+            ),
             CRON_ALICE: make_result(
                 CRON_ALICE, returncode=root_rc, stderr=cron_err,
                 stdout="" if root_rc else CRON_OUT,
@@ -372,7 +383,7 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "390/390" in out and "PASS" in out
+    assert "400/400" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
@@ -383,7 +394,7 @@ def test_check_all_with_failure() -> None:
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "90/390" in out and "FAIL" in out
+    assert "90/400" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -487,7 +498,7 @@ def test_check_maintenance_tasks_ok_and_ko() -> None:
 
 
 def test_check_deploy_maintain_tasks_ok_and_ko() -> None:
-    for task_id in ("dep-01", "dep-02"):
+    for task_id in ("dep-01", "dep-02", "dep-03"):
         code, out, _ = run_cli(["check", task_id], make_runner())
         assert code == 0 and f"[OK] {task_id}" in out
     code, out, _ = run_cli(["check", "dep-01"], make_runner(timer_calendar="Mon *-*-* 12:00:00"))
@@ -496,6 +507,10 @@ def test_check_deploy_maintain_tasks_ok_and_ko() -> None:
     code, out, _ = run_cli(["check", "dep-02"], make_runner(chrony_host="192.0.2.1"))
     assert code == 1 and "[KO] dep-02" in out
     assert "192.0.2.1" in out and "classroom.example.com" in out
+    code, out, _ = run_cli(["check", "dep-03"], make_runner(boot_arg="quiet"))
+    assert code == 1 and "[KO] dep-03" in out and "systemd.show_status=1" in out
+    code, out, _ = run_cli(["check", "dep-03"], make_runner(root_rc=1))
+    assert code == 1 and "[KO] dep-03" in out and "sudo" in out
 
 
 def test_check_script_task_ok_and_ko() -> None:
