@@ -85,6 +85,11 @@ def test_shebang_ko(first: str) -> None:
     assert not result.passed and "shebang" in result.detail
 
 
+def test_shebang_ko_crlf() -> None:
+    result = ScriptHasShebang(fake(HEAD_CMD, stdout="#!/bin/bash\r\n"), PATH).run()
+    assert not result.passed and "CRLF" in result.detail
+
+
 def test_shebang_ko_unreadable() -> None:
     result = ScriptHasShebang(fake(HEAD_CMD, 1, stderr="Permission denied"), PATH).run()
     assert not result.passed and "cannot read" in result.detail

@@ -221,3 +221,33 @@ def test_tuned_errors() -> None:
     assert not result.passed and "unexpected tuned-adm output" in result.detail
     result = TunedProfileIs(fake(TUNED, "Current active profile: Bad Name\n"), "virtual-guest").run()
     assert not result.passed and "unexpected tuned-adm output" in result.detail
+
+
+def test_tuned_multiline_output_parses_only_profile_line() -> None:
+    out = "Current active profile: virtual-guest\nPreset profile: balanced\n"
+    assert TunedProfileIs(fake(TUNED, out), "virtual-guest").run().passed
+    out = "Current active profile: virtual-guest\nCurrent post-loaded profile: my-post\n"
+    assert TunedProfileIs(fake(TUNED, out), "virtual-guest").run().passed
+    out = "Preset profile: balanced\nCurrent active profile: virtual-guest\n"
+    assert TunedProfileIs(fake(TUNED, out), "virtual-guest").run().passed
+
+
+def test_tuned_multiline_mismatch_reports_actual() -> None:
+    out = "Current active profile: balanced\nCurrent post-loaded profile: virtual-guest\n"
+    result = TunedProfileIs(fake(TUNED, out), "virtual-guest").run()
+    assert not result.passed and "balanced" in result.detail
+
+
+def test_tuned_daemon_down_fails_clearly() -> None:
+    out = "No current active profile.\nService tuned: Not Running\n"
+    result = TunedProfileIs(fake(TUNED, out), "virtual-guest").run()
+    assert not result.passed and "no active tuned profile" in result.detail
+    out = "Current active profile: virtual-guest\nService tuned: Not Running\n"
+    result = TunedProfileIs(fake(TUNED, out), "virtual-guest").run()
+    assert not result.passed and "not running" in result.detail
+
+
+def test_tuned_duplicate_profile_lines_are_unexpected() -> None:
+    out = "Current active profile: virtual-guest\nCurrent active profile: balanced\n"
+    result = TunedProfileIs(fake(TUNED, out), "virtual-guest").run()
+    assert not result.passed and "unexpected tuned-adm output" in result.detail

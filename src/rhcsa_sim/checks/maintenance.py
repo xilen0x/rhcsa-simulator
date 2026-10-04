@@ -18,6 +18,7 @@ _CRON_ROOT = "crontab -l -u requires root (run with sudo)"
 _REPO_STATES = frozenset({"enabled", "disabled"})
 _TUNED_PREFIX = "Current active profile:"
 _TUNED_NONE = "No current active profile."
+_TUNED_DOWN = "Service tuned: Not Running"
 # campos de cron: numeros, '*', '/', ',' y '-' (sin nombres de mes/dia)
 _CRON_FIELD_RE = re.compile(r"[0-9*/,-]+")
 _CRON_MACROS = frozenset(
@@ -143,12 +144,12 @@ class CronEntryExists:
 
     def __post_init__(self) -> None:
         validate_account_name(self.user)
-        _validate_schedule(self.schedule)
-        _validate_command(self.command)
+        # se valida y normaliza una sola vez; el resto de metodos usa los valores ya normalizados
+        object.__setattr__(self, "schedule", _validate_schedule(self.schedule))
+        object.__setattr__(self, "command", _validate_command(self.command))
 
     def describe(self) -> str:
-        entry = f"{_validate_schedule(self.schedule)} {_validate_command(self.command)}"
-        return f"{self.user} has cron entry '{entry}'"
+        return f"{self.user} has cron entry '{self.schedule} {self.command}'"
 
     def run(self) -> CheckResult:
         result = self.runner.run(["crontab", "-l", "-u", self.user])
@@ -159,7 +160,7 @@ class CronEntryExists:
             if "must be privileged" in text or "Permission denied" in text:
                 return CheckResult(False, _CRON_ROOT)
             return CheckResult(False, f"cannot query crontab (exit {result.returncode})")
-        wanted = (_validate_schedule(self.schedule), _validate_command(self.command))
+        wanted = (self.schedule, self.command)
         if wanted in _cron_entries(result.stdout):
             return CheckResult(True, f"'{self.user}' has cron entry '{' '.join(wanted)}'")
         return CheckResult(False, f"no cron entry '{' '.join(wanted)}' for '{self.user}'")
@@ -180,14 +181,25 @@ class TunedProfileIs:
         result = self.runner.run(["tuned-adm", "active"])
         if not result.ok:
             return CheckResult(False, f"cannot query tuned (exit {result.returncode})")
-        text = result.stdout.strip()
-        if text == _TUNED_NONE:
+        lines = [line.strip() for line in result.stdout.splitlines()]
+        if _TUNED_NONE in lines:
             return CheckResult(False, "no active tuned profile")
-        actual = text.removeprefix(_TUNED_PREFIX).strip() if text.startswith(_TUNED_PREFIX) else ""
+        # solo cuenta la linea "Current active profile:"; el resto (post-loaded, preset,
+        # estado del servicio) es informativo
+        profiles = [
+            line.removeprefix(_TUNED_PREFIX).strip()
+            for line in lines
+            if line.startswith(_TUNED_PREFIX)
+        ]
+        if len(profiles) != 1:
+            return CheckResult(False, _UNEXPECTED_TUNED)
+        actual = profiles[0]
         try:
             validate_tuned_profile(actual)
         except ValueError:
             return CheckResult(False, _UNEXPECTED_TUNED)
+        if _TUNED_DOWN in lines:
+            return CheckResult(False, "tuned service is not running (profile may not be applied)")
         if actual != self.profile:
             return CheckResult(False, f"tuned profile is {actual}, expected {self.profile}")
         return CheckResult(True, f"tuned profile is {actual}")

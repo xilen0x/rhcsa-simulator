@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from posixpath import basename
 
-from rhcsa_sim.checks._validation import validate_absolute_path
-from rhcsa_sim.checks.files import _parse_mode
+from rhcsa_sim.checks._validation import parse_octal_mode, validate_absolute_path
 from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandRunner
 
@@ -40,7 +39,7 @@ class FileIsExecutable:
         if len(parts) != 2:
             return CheckResult(False, "unexpected stat output")
         try:
-            mode = _parse_mode(parts[0])
+            mode = parse_octal_mode(parts[0])
         except ValueError:
             return CheckResult(False, "unexpected stat output")
         if not parts[1].startswith("regular"):
@@ -67,7 +66,10 @@ class ScriptHasShebang:
         result = self.runner.run(["head", "-n", "1", "--", self.path])
         if not result.ok:
             return CheckResult(False, f"cannot read '{self.path}'")
-        first = result.stdout.splitlines()[0].rstrip() if result.stdout else ""
+        # split("\n") (no splitlines) para conservar el '\r' de un fin de linea CRLF
+        first = result.stdout.split("\n")[0].rstrip(" \t")
+        if first.endswith("\r"):
+            return CheckResult(False, "shebang line ends with CRLF (use LF line endings)")
         accepted = (
             f"#!{self.interpreter}",
             f"#!/usr/bin/env {basename(self.interpreter)}",

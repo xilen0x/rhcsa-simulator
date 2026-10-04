@@ -88,13 +88,18 @@ class SudoersValid:
         )
 
 
+def _runas_includes_all(runas: str) -> bool:
+    """El grupo '(runas)' de sudo incluye ALL (puede ejecutar como cualquier usuario/grupo)."""
+    return "ALL" in re.split(r"[\s:,]+", runas.strip())
+
+
 def _parse_rule(line: str) -> list[tuple[str, bool]] | None:
     """Rule '(runas) [TAG:] cmd, ...' como [(comando, nopasswd)]; None si el runas
     no incluye ALL o la linea no es una regla."""
     match = _RULE_RE.fullmatch(line)
     if match is None:
         return None
-    if "ALL" not in re.split(r"[\s:,]+", match.group(1).strip()):
+    if not _runas_includes_all(match.group(1)):
         return None
     nopasswd = False
     grants: list[tuple[str, bool]] = []

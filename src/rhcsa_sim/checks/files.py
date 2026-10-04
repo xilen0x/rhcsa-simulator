@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rhcsa_sim.checks._validation import validate_absolute_path, validate_account_name
+from rhcsa_sim.checks._validation import (
+    parse_octal_mode,
+    validate_absolute_path,
+    validate_account_name,
+)
 from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandRunner
 
@@ -14,13 +18,6 @@ class StatInfo:
     group: str
 
 
-def _parse_mode(text: str) -> int:
-    """Convierte un modo octal ('640', '0640', '2770') a int. ValueError si es invalido."""
-    if not text or len(text) > 4 or any(c not in "01234567" for c in text):
-        raise ValueError(f"invalid octal mode: {text!r}")
-    return int(text, 8)
-
-
 def _stat_path(runner: CommandRunner, path: str) -> StatInfo | None:
     result = runner.run(["stat", "-c", "%a %U %G", "--", path])
     if not result.ok:
@@ -29,7 +26,7 @@ def _stat_path(runner: CommandRunner, path: str) -> StatInfo | None:
     if len(parts) != 3:
         return None
     try:
-        return StatInfo(_parse_mode(parts[0]), parts[1], parts[2])
+        return StatInfo(parse_octal_mode(parts[0]), parts[1], parts[2])
     except ValueError:
         return None
 
@@ -42,7 +39,7 @@ class PathHasMode:
 
     def __post_init__(self) -> None:
         validate_absolute_path(self.path)
-        _parse_mode(self.mode)
+        parse_octal_mode(self.mode)
 
     def describe(self) -> str:
         return f"{self.path} has mode {self.mode}"
@@ -51,7 +48,7 @@ class PathHasMode:
         info = _stat_path(self.runner, self.path)
         if info is None:
             return CheckResult(False, f"cannot stat '{self.path}'")
-        expected = _parse_mode(self.mode)
+        expected = parse_octal_mode(self.mode)
         if info.mode != expected:
             return CheckResult(False, f"mode is {info.mode:o}, expected {expected:o}")
         return CheckResult(True, f"mode is {expected:o}")

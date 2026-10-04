@@ -31,6 +31,13 @@ _ACL_ENTRY_RE = re.compile(
 )
 
 
+def parse_octal_mode(text: str) -> int:
+    """Convierte un modo octal ('640', '0640', '2770') a int. ValueError si es invalido."""
+    if not text or len(text) > 4 or any(c not in "01234567" for c in text):
+        raise ValueError(f"invalid octal mode: {text!r}")
+    return int(text, 8)
+
+
 def validate_account_name(name: str) -> str:
     if not _ACCOUNT_NAME_RE.fullmatch(name):
         raise ValueError(f"invalid user/group name: {name!r}")

@@ -50,6 +50,10 @@ from rhcsa_sim.registry import TaskRegistry
 from rhcsa_sim.runner import CommandRunner
 
 
+# Hostname compartido por net-02 y scr-01.
+LAB_HOSTNAME = "servera.lab.example.com"
+
+
 def build_catalog(runner: CommandRunner) -> TaskRegistry:
     return TaskRegistry(
         [
@@ -216,9 +220,9 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
             Task(
                 id="net-02",
                 block=ObjectiveBlock.NETWORKING,
-                description="Configura de forma persistente el hostname servera.lab.example.com.",
+                description=f"Configura de forma persistente el hostname {LAB_HOSTNAME}.",
                 points=10,
-                checks=(HostnameIs(runner, "servera.lab.example.com"),),
+                checks=(HostnameIs(runner, LAB_HOSTNAME),),
             ),
             Task(
                 id="se-01",
@@ -324,15 +328,15 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 block=ObjectiveBlock.SHELL_SCRIPTS,
                 description=(
                     "Crea el script ejecutable /usr/local/bin/sysinfo.sh (bash) que escriba el "
-                    "hostname del sistema en la primera linea de /root/sysinfo.txt, y ejecutalo "
-                    "una vez (el hostname configurado en net-02: servera.lab.example.com)."
+                    "hostname del sistema en /root/sysinfo.txt (en una linea propia), y ejecutalo "
+                    f"una vez (el hostname configurado en net-02: {LAB_HOSTNAME})."
                 ),
                 points=10,
                 checks=(
                     FileIsExecutable(runner, "/usr/local/bin/sysinfo.sh"),
                     ScriptHasShebang(runner, "/usr/local/bin/sysinfo.sh", "/bin/bash"),
                     ScriptSyntaxValid(runner, "/usr/local/bin/sysinfo.sh"),
-                    FileContainsLine(runner, "/root/sysinfo.txt", "servera.lab.example.com"),
+                    FileContainsLine(runner, "/root/sysinfo.txt", LAB_HOSTNAME),
                 ),
             ),
         ]
