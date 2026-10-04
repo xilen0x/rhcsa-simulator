@@ -18,6 +18,8 @@ from rhcsa_sim.ui import Ui
 BOX_WIDTH = 76
 EXAM_NAME = "RHCSA EX200 · RHEL 10"
 PROMPT = "> "
+# Mueve el cursor al inicio y borra la pantalla (solo se usa en una terminal real).
+CLEAR_SCREEN = "\x1b[H\x1b[2J"
 
 _COMMAND_BAR = "[Enter] next [p] prev [N|id] jump [c] check [a] all [l] list [h] help [q] quit"
 
@@ -85,8 +87,11 @@ class SessionState:
 
 @dataclass(frozen=True, slots=True)
 class Reply:
+    """Texto a mostrar; clear indica que reemplaza la pantalla (vista de tarea)."""
+
     text: str
     quit: bool = False
+    clear: bool = False
 
 
 def _badge(ui: Ui, status: str) -> str:
@@ -123,10 +128,6 @@ def render_task(state: SessionState, ui: Ui) -> str:
 
 def render_command_bar(ui: Ui) -> str:
     return ui.dim(_COMMAND_BAR)
-
-
-def render_screen(state: SessionState, ui: Ui) -> str:
-    return render_task(state, ui) + "\n" + render_command_bar(ui)
 
 
 def render_result(result: TaskResult, ui: Ui) -> str:
@@ -193,14 +194,14 @@ def dispatch(state: SessionState, ui: Ui, line: str) -> Reply:
     command = line.strip().lower()
     if command in ("", "n"):
         if state.move(1):
-            return Reply(render_screen(state, ui))
+            return Reply(render_task(state, ui), clear=True)
         return Reply(ui.yellow("This is the last task."))
     if command == "p":
         if state.move(-1):
-            return Reply(render_screen(state, ui))
+            return Reply(render_task(state, ui), clear=True)
         return Reply(ui.yellow("This is the first task."))
     if command == "s":
-        return Reply(render_screen(state, ui))
+        return Reply(render_task(state, ui), clear=True)
     if command in ("h", "?"):
         return Reply(render_help(ui))
     if command == "l":
@@ -208,7 +209,9 @@ def dispatch(state: SessionState, ui: Ui, line: str) -> Reply:
     if command == "c":
         results = evaluate_tasks((state.current,))
         state.remember(results)
-        return Reply(render_result(results[0], ui))
+        return Reply(
+            render_task(state, ui) + "\n" + render_result(results[0], ui), clear=True
+        )
     if command == "a":
         results = evaluate_tasks(state.tasks)
         state.remember(results)
@@ -223,7 +226,7 @@ def dispatch(state: SessionState, ui: Ui, line: str) -> Reply:
             quit=True,
         )
     if state.jump(command):
-        return Reply(render_screen(state, ui))
+        return Reply(render_task(state, ui), clear=True)
     if command.isdecimal():
         return Reply(ui.red(f"No such task. Use a number from 1-{len(state.tasks)}."))
     return Reply(
@@ -236,22 +239,33 @@ def run_session(
     ui: Ui,
     read: Callable[[], str],
     out: TextIO,
+    *,
+    clear_screen: bool = False,
 ) -> int:
-    """Bucle de lectura: EOF y Ctrl+C terminan limpiamente con codigo 0."""
+    """Bucle de lectura: EOF y Ctrl+C terminan limpiamente con codigo 0.
+
+    Con clear_screen, cada vista de tarea reemplaza la pantalla anterior; el menu
+    de comandos se muestra siempre debajo de cada respuesta."""
     state = SessionState(registry.all())
     if not state.tasks:
         out.write("No tasks available.\n")
         return 0
+    bar = render_command_bar(ui) + "\n"
+    if clear_screen:
+        out.write(CLEAR_SCREEN)
     out.write(render_banner(state, ui) + "\n")
-    out.write(render_screen(state, ui) + "\n")
+    out.write(render_task(state, ui) + "\n" + bar)
     try:
         while True:
             out.write(PROMPT)
             out.flush()
             reply = dispatch(state, ui, read())
+            if reply.clear and clear_screen:
+                out.write(CLEAR_SCREEN)
             out.write(reply.text + "\n")
             if reply.quit:
                 break
+            out.write(bar)
     except (EOFError, KeyboardInterrupt):
         out.write("\n")
     return 0

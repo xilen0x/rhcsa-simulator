@@ -201,3 +201,60 @@ def test_status_badge_follows_results() -> None:
     assert "failed" in send(state, "s")[0]
 
 
+
+
+CLEAR = "\x1b[H\x1b[2J"
+BAR = "[Enter] next"
+
+
+def screen_session(lines: list[str], tasks: tuple[Task, ...]) -> str:
+    feed = iter(lines)
+
+    def read() -> str:
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    out = io.StringIO()
+    run_session(TaskRegistry(tasks), PLAIN, read, out, clear_screen=True)
+    return out.getvalue()
+
+
+def test_navigation_clears_screen_and_shows_only_new_task_and_menu() -> None:
+    tasks, _ = make_tasks()
+    out = screen_session(["n"], tasks)
+    last = out.split(CLEAR)[-1]
+    assert "Task 2/3" in last and BAR in last
+    assert "Task 1/3" not in last and "RHCSA EX200" not in last
+    assert last.index("Task 2/3") < last.index(BAR)
+
+
+def test_check_clears_and_shows_task_result_and_menu() -> None:
+    tasks, _ = make_tasks()
+    out = screen_session(["c"], tasks)
+    last = out.split(CLEAR)[-1]
+    assert "Task 1/3" in last and "detail-ok" in last and BAR in last
+    assert last.index("Task 1/3") < last.index("detail-ok") < last.index(BAR)
+
+
+def test_menu_follows_every_reply() -> None:
+    tasks, _ = make_tasks()
+    out = screen_session(["l", "h", "zz", "p"], tasks)
+    assert out.count(BAR) == 5
+
+
+def test_non_navigation_replies_do_not_clear() -> None:
+    tasks, _ = make_tasks()
+    state = SessionState(tasks)
+    for line in ("l", "h", "a", "zz", "p", "99"):
+        assert dispatch(state, PLAIN, line).clear is False
+    for line in ("n", "p", "3", "s", "c"):
+        assert dispatch(state, PLAIN, line).clear is True
+
+
+def test_no_clear_sequence_when_disabled() -> None:
+    tasks, _ = make_tasks()
+    _, out = session(["n", "c", "q"], tasks)
+    assert CLEAR not in out
+    assert out.count(BAR) == 3
