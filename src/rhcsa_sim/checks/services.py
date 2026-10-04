@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from rhcsa_sim.checks._validation import validate_unit_name
@@ -11,6 +12,7 @@ _REQUIRED_KEYS = ("LoadState", "ActiveState", "UnitFileState")
 _FILE_STATES = frozenset({"enabled", "disabled", "masked", "static"})
 _ACTIVE_STATES = frozenset({"active", "inactive", "failed"})
 _UNEXPECTED = "unexpected systemctl output"
+_ON_CALENDAR_RE = re.compile(r"\{ OnCalendar=(.+?) ;")
 
 
 def _query_failed(what: str, result: CommandResult) -> CheckResult:
@@ -134,3 +136,44 @@ class DefaultTarget:
         if actual != self.target:
             return CheckResult(False, f"default target is {actual}, expected {self.target}")
         return CheckResult(True, f"default target is {actual}")
+
+
+@dataclass(frozen=True, slots=True)
+class TimerOnCalendar:
+    """Un .timer tiene un disparador OnCalendar con la expresion normalizada
+    que muestra systemd (p. ej. 'daily' -> '*-*-* 00:00:00')."""
+
+    runner: CommandRunner
+    timer: str
+    expected: str
+
+    def __post_init__(self) -> None:
+        validate_unit_name(self.timer)
+        if not self.timer.endswith(".timer"):
+            raise ValueError(f"not a timer unit: {self.timer!r}")
+        if not self.expected.strip():
+            raise ValueError("expected OnCalendar expression must not be empty")
+
+    def describe(self) -> str:
+        return f"{self.timer} has OnCalendar={self.expected}"
+
+    def run(self) -> CheckResult:
+        result = self.runner.run(
+            ["systemctl", "show", "--property=TimersCalendar", "--value", "--", self.timer]
+        )
+        if not result.ok:
+            return _query_failed(f"timer '{self.timer}'", result)
+        if not result.stdout.strip():
+            return CheckResult(
+                False,
+                f"{self.timer} has no OnCalendar trigger (unit missing or monotonic-only)",
+            )
+        found = _ON_CALENDAR_RE.findall(result.stdout)
+        if not found:
+            return CheckResult(False, f"{_UNEXPECTED} for timer '{self.timer}'")
+        if self.expected not in found:
+            return CheckResult(
+                False,
+                f"OnCalendar is {', '.join(found)}, expected {self.expected}",
+            )
+        return CheckResult(True, f"'{self.timer}' has OnCalendar={self.expected}")
