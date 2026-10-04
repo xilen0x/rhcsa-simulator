@@ -12,6 +12,12 @@ from rhcsa_sim.checks.containers import (
     QuadletUnitDefined,
     UserServiceActive,
 )
+from rhcsa_sim.checks.essentials import (
+    ArchiveContains,
+    GrepOutputSaved,
+    HardLinkTo,
+    SymlinkTo,
+)
 from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
@@ -421,6 +427,44 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(JournalPersistent(runner),),
+            ),
+            Task(
+                id="ess-01",
+                block=ObjectiveBlock.ESSENTIAL_TOOLS,
+                description=(
+                    "Crea una copia de seguridad de /etc como archivo tar comprimido con "
+                    "gzip en /root/etc-backup.tar.gz."
+                ),
+                points=10,
+                checks=(
+                    ArchiveContains(
+                        runner, "/root/etc-backup.tar.gz", "gzip", ("etc/fstab", "etc/hosts")
+                    ),
+                ),
+            ),
+            Task(
+                id="ess-02",
+                block=ObjectiveBlock.ESSENTIAL_TOOLS,
+                description=(
+                    "Crea el enlace simbolico /root/hosts-link que apunte a /etc/hosts; "
+                    "crea ademas el fichero /root/notes.txt (con cualquier contenido) y un "
+                    "enlace duro a el llamado /root/notes.hard."
+                ),
+                points=10,
+                checks=(
+                    SymlinkTo(runner, "/root/hosts-link", "/etc/hosts"),
+                    HardLinkTo(runner, "/root/notes.hard", "/root/notes.txt"),
+                ),
+            ),
+            Task(
+                id="ess-03",
+                block=ObjectiveBlock.ESSENTIAL_TOOLS,
+                description=(
+                    "Guarda en /root/nologin.txt, en el mismo orden, las lineas de "
+                    "/etc/passwd que contengan la cadena nologin."
+                ),
+                points=10,
+                checks=(GrepOutputSaved(runner, "/etc/passwd", "nologin", "/root/nologin.txt"),),
             ),
         ]
     )

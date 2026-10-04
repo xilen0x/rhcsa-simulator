@@ -12,6 +12,7 @@ def test_catalog_has_expected_well_formed_tasks() -> None:
     ids += ["scr-01"]
     ids += ["con-01", "con-02", "con-03"]
     ids += ["prc-01", "log-01"]
+    ids += ["ess-01", "ess-02", "ess-03"]
     assert [t.id for t in tasks] == ids
     assert all(t.points > 0 and t.checks for t in tasks)
     assert len({t.id for t in tasks}) == len(tasks)

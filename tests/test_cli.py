@@ -120,6 +120,15 @@ SYSINFO_GREP = ("grep", "-Fxq", "--", HOSTNAME, "/root/sysinfo.txt")
 PS_CROND = ("ps", "-C", "crond", "-o", "pid=,ni=,user:32=,stat=,comm=")
 JOURNAL_CONF = ("systemd-analyze", "cat-config", "systemd/journald.conf")
 JOURNAL_DIR = ("stat", "-L", "-c", "%F", "--", "/var/log/journal")
+ARCHIVE = "/root/etc-backup.tar.gz"
+ARCHIVE_MIME = ("file", "-b", "--mime-type", "--", ARCHIVE)
+ARCHIVE_LIST = ("tar", "-tf", ARCHIVE)
+SYMLINK_STAT = ("stat", "-c", "%F", "--", "/root/hosts-link")
+SYMLINK_READ = ("readlink", "--", "/root/hosts-link")
+NOTES_STAT = ("stat", "-c", "%d %i %F", "--", "/root/notes.txt")
+NOTES_HARD_STAT = ("stat", "-c", "%d %i %F", "--", "/root/notes.hard")
+NOLOGIN_GREP = ("grep", "--", "nologin", "/etc/passwd")
+NOLOGIN_CAT = ("cat", "--", "/root/nologin.txt")
 CONTAINER_IMAGE = "registry.access.redhat.com/ubi10/httpd-24"
 ID_ALICE = ("id", "-u", "--", "alice")
 PODMAN = ("runuser", "-u", "alice", "--", "env", "-C", "/", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
@@ -171,6 +180,7 @@ def make_runner(
     script_rc: int = 0,
     container_rc: int = 0,
     procs_ok: bool = True,
+    ess_ok: bool = True,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -219,6 +229,10 @@ def make_runner(
     # procs_ok=False: crond con nice 0, un yes descontrolado y journald con Storage=auto
     crond_out = f"  701 {10 if procs_ok else 0} root     Ss   crond\n"
     journal_conf = f"[Journal]\nStorage={'persistent' if procs_ok else 'auto'}\n"
+
+    # ess_ok=False: archivo xz, enlaces rotos y /root/nologin.txt ausente
+    nologin = "daemon:x:2:2::/sbin:/sbin/nologin\nbin:x:1:1::/bin:/sbin/nologin\n"
+    inode = "64768 1034 regular file\n" if ess_ok else "64768 1035 regular file\n"
 
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
     return FakeCommandRunner(
@@ -276,6 +290,20 @@ def make_runner(
             ),
             SCRIPT_SYNTAX: make_result(SCRIPT_SYNTAX, returncode=127 if script_rc else 0),
             SYSINFO_GREP: make_result(SYSINFO_GREP, returncode=2 if script_rc else 0),
+            ARCHIVE_MIME: make_result(
+                ARCHIVE_MIME, stdout="application/gzip\n" if ess_ok else "application/x-xz\n"
+            ),
+            ARCHIVE_LIST: make_result(ARCHIVE_LIST, stdout="etc/\netc/fstab\netc/hosts\n"),
+            SYMLINK_STAT: make_result(SYMLINK_STAT, stdout="symbolic link\n"),
+            SYMLINK_READ: make_result(
+                SYMLINK_READ, stdout="/etc/hosts\n" if ess_ok else "/etc/passwd\n"
+            ),
+            NOTES_STAT: make_result(NOTES_STAT, stdout="64768 1034 regular file\n"),
+            NOTES_HARD_STAT: make_result(NOTES_HARD_STAT, stdout=inode),
+            NOLOGIN_GREP: make_result(NOLOGIN_GREP, stdout=nologin),
+            NOLOGIN_CAT: make_result(
+                NOLOGIN_CAT, returncode=0 if ess_ok else 1, stdout=nologin if ess_ok else ""
+            ),
             PS_CROND: make_result(PS_CROND, stdout=crond_out),
             JOURNAL_CONF: make_result(JOURNAL_CONF, stdout=journal_conf),
             JOURNAL_DIR: make_result(JOURNAL_DIR, stdout="directory\n"),
@@ -339,18 +367,18 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "310/310" in out and "PASS" in out
+    assert "340/340" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
         group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
         net_method="auto", running_hostname="localhost", root_rc=1, script_rc=1,
-        container_rc=1, procs_ok=False,
+        container_rc=1, procs_ok=False, ess_ok=False,
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "60/310" in out and "FAIL" in out
+    assert "60/340" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -475,6 +503,14 @@ def test_check_process_and_journal_tasks_ok_and_ko() -> None:
         code, out, _ = run_cli(["check", task_id], make_runner())
         assert code == 0 and f"[OK] {task_id}" in out
         code, out, _ = run_cli(["check", task_id], make_runner(procs_ok=False))
+        assert code == 1 and f"[KO] {task_id}" in out
+
+
+def test_check_essential_tools_tasks_ok_and_ko() -> None:
+    for task_id in ("ess-01", "ess-02", "ess-03"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+        code, out, _ = run_cli(["check", task_id], make_runner(ess_ok=False))
         assert code == 1 and f"[KO] {task_id}" in out
 
 
