@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-from rhcsa_sim.interactive import SessionState, dispatch, run_session
+from rhcsa_sim.interactive import PROMPT, SessionState, dispatch, run_session
 from rhcsa_sim.models import CheckResult, ObjectiveBlock, Task
 from rhcsa_sim.registry import TaskRegistry
 from rhcsa_sim.ui import Ui
@@ -240,8 +240,22 @@ def test_check_clears_and_shows_task_result_and_menu() -> None:
 
 def test_menu_follows_every_reply() -> None:
     tasks, _ = make_tasks()
-    out = screen_session(["l", "h", "zz", "p"], tasks)
-    assert out.count(BAR) == 5
+    feed = iter(["l", "h", "zz", "p"])
+    out = io.StringIO()
+    before_each_read: list[str] = []
+
+    def read() -> str:
+        before_each_read.append(out.getvalue())
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    run_session(TaskRegistry(tasks), PLAIN, read, out, clear_screen=True)
+    assert len(before_each_read) == 5
+    for screen in before_each_read:
+        last_line = screen.removesuffix(PROMPT).splitlines()[-1]
+        assert last_line.startswith(BAR)
 
 
 def test_non_navigation_replies_do_not_clear() -> None:
