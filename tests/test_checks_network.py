@@ -315,8 +315,8 @@ def test_invalid_parameters() -> None:
 
 
 # --- IPv6 ---
-# Los ':' de los valores van escapados como '\:' (regla de nmcli -t; fixture derivado
-# de esa regla, no observado: la VM de pruebas no tiene IPv6 manual).
+# nmcli -t escapa ':' como '\:' solo cuando hay ambiguedad; con varios campos de
+# perfil la salida real (2026-10-04, ver REAL6) no los escapa. Se prueban ambas formas.
 FIELDS6 = "connection.id,ipv6.method,ipv6.addresses,ipv6.gateway"
 SHOW6 = ("nmcli", "-t", "-f", FIELDS6, "connection", "show", "id", "exam-static")
 ADDR6 = "2001:db8:10::50/64"
@@ -342,6 +342,19 @@ def fake6(stdout: str, returncode: int = 0, stderr: str = "") -> FakeCommandRunn
     return FakeCommandRunner(
         {SHOW6: make_result(SHOW6, returncode=returncode, stdout=stdout, stderr=stderr)}
     )
+
+
+# salida literal de `nmcli -t -f ... connection show id exam-static` (2026-10-04)
+REAL6 = (
+    "connection.id:exam-static\n"
+    "ipv6.method:manual\n"
+    "ipv6.addresses:2001:db8:10::50/64\n"
+    "ipv6.gateway:2001:db8:10::1\n"
+)
+
+
+def test_ipv6_passes_with_real_unescaped_output() -> None:
+    assert ConnectionStaticIpv6(fake6(REAL6), "exam-static", ADDR6, GW6).run().passed
 
 
 def test_ipv6_passes_with_escaped_colons() -> None:
