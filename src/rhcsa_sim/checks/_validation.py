@@ -23,6 +23,7 @@ _HOSTNAME_LABEL_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _REPO_ID_RE = re.compile(r"[A-Za-z0-9_.:][A-Za-z0-9_.:-]{0,99}")
 _PACKAGE_NAME_RE = re.compile(r"[A-Za-z0-9_+.][A-Za-z0-9_+.-]{0,127}")
 _TUNED_PROFILE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+_LOGIN_DEFS_KEY_RE = re.compile(r"[A-Z_][A-Z0-9_]*")
 _PROTOCOLS = frozenset({"tcp", "udp", "sctp", "dccp"})
 _ACL_PERMS = r"[r-][w-][x-]"
 _ACL_ENTRY_RE = re.compile(
@@ -172,6 +173,13 @@ def validate_sshd_keyword(name: str) -> str:
     """Keyword de sshd -T: minusculas y digitos, tal como las imprime sshd."""
     if not _SSHD_KEYWORD_RE.fullmatch(name):
         raise ValueError(f"invalid sshd keyword: {name!r}")
+    return name
+
+
+def validate_login_defs_key(name: str) -> str:
+    """Clave de /etc/login.defs: mayusculas, digitos y '_'."""
+    if not _LOGIN_DEFS_KEY_RE.fullmatch(name):
+        raise ValueError(f"invalid login.defs key: {name!r}")
     return name
 
 

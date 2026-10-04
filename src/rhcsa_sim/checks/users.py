@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rhcsa_sim.checks._validation import validate_account_name
+from rhcsa_sim.checks._validation import validate_account_name, validate_login_defs_key
 from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandRunner
 
@@ -156,3 +156,108 @@ class GroupExists:
         if self.gid is not None and entry.gid != self.gid:
             return CheckResult(False, f"GID is {entry.gid}, expected {self.gid}")
         return CheckResult(True, f"group '{self.name}' exists")
+
+
+_CHAGE_ROOT = "chage -l requires root for other users (run with sudo)"
+_CHAGE_KEYS = {
+    "max_days": "Maximum number of days between password change",
+    "min_days": "Minimum number of days between password change",
+    "warn_days": "Number of days of warning before password expires",
+}
+
+
+def _parse_chage(stdout: str) -> dict[str, str]:
+    """Pares 'clave : valor' de `chage -l` (se parte en el primer ':')."""
+    fields: dict[str, str] = {}
+    for line in stdout.splitlines():
+        key, sep, value = line.partition(":")
+        if sep:
+            fields[key.strip()] = value.strip()
+    return fields
+
+
+@dataclass(frozen=True, slots=True)
+class PasswordAging:
+    """Politica de caducidad de la contrasena de un usuario segun `chage -l`."""
+
+    runner: CommandRunner
+    name: str
+    max_days: int | None = None
+    min_days: int | None = None
+    warn_days: int | None = None
+
+    def _expected(self) -> dict[str, int]:
+        values = {
+            "max_days": self.max_days,
+            "min_days": self.min_days,
+            "warn_days": self.warn_days,
+        }
+        return {field: value for field, value in values.items() if value is not None}
+
+    def __post_init__(self) -> None:
+        validate_account_name(self.name)
+        expected = self._expected()
+        if not expected:
+            raise ValueError("at least one of max_days, min_days, warn_days is required")
+        if any(value < 0 for value in expected.values()):
+            raise ValueError("aging values must not be negative")
+
+    def describe(self) -> str:
+        parts = ", ".join(
+            f"{field.removesuffix('_days')} {value}" for field, value in self._expected().items()
+        )
+        return f"user {self.name} password aging: {parts} days"
+
+    def run(self) -> CheckResult:
+        result = self.runner.run(["chage", "-l", "--", self.name])
+        if not result.ok:
+            output = f"{result.stderr}\n{result.stdout}"
+            if "Permission denied" in output:
+                return CheckResult(False, _CHAGE_ROOT)
+            if "does not exist" in output:
+                return CheckResult(False, f"user '{self.name}' does not exist")
+            return CheckResult(False, f"cannot query password aging (exit {result.returncode})")
+        fields = _parse_chage(result.stdout)
+        problems: list[str] = []
+        for field, expected in self._expected().items():
+            label = _CHAGE_KEYS[field]
+            raw = fields.get(label)
+            if raw is None or not raw.lstrip("-").isdigit():
+                return CheckResult(False, "unexpected chage output")
+            if int(raw) != expected:
+                problems.append(f"{field.removesuffix('_days')} is {raw}, expected {expected}")
+        if problems:
+            return CheckResult(False, "; ".join(problems))
+        return CheckResult(True, "password aging is correct")
+
+
+@dataclass(frozen=True, slots=True)
+class LoginDefsValue:
+    """Valor efectivo (la ultima asignacion gana) de una clave de /etc/login.defs."""
+
+    runner: CommandRunner
+    key: str
+    value: str
+
+    def __post_init__(self) -> None:
+        validate_login_defs_key(self.key)
+        if not self.value or not self.value.isprintable() or self.value != self.value.strip():
+            raise ValueError(f"invalid login.defs value: {self.value!r}")
+
+    def describe(self) -> str:
+        return f"/etc/login.defs sets {self.key} to {self.value}"
+
+    def run(self) -> CheckResult:
+        result = self.runner.run(["cat", "--", "/etc/login.defs"])
+        if not result.ok:
+            return CheckResult(False, "cannot read /etc/login.defs")
+        current: str | None = None
+        for line in result.stdout.splitlines():
+            parts = line.strip().split(None, 1)
+            if len(parts) == 2 and parts[0] == self.key:
+                current = parts[1].strip()
+        if current is None:
+            return CheckResult(False, f"{self.key} is not set in /etc/login.defs")
+        if current != self.value:
+            return CheckResult(False, f"{self.key} is {current}, expected {self.value}")
+        return CheckResult(True, f"{self.key} is {self.value}")

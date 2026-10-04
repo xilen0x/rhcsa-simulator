@@ -4,6 +4,8 @@ import pytest
 
 from rhcsa_sim.checks.users import (
     GroupExists,
+    LoginDefsValue,
+    PasswordAging,
     UserExists,
     UserHasShell,
     UserHasUid,
@@ -89,3 +91,111 @@ def test_group_exists_with_and_without_gid() -> None:
 def test_group_missing() -> None:
     fake = FakeCommandRunner({GROUP_CMD: make_result(GROUP_CMD, returncode=2)})
     assert not GroupExists(fake, "devs").run().passed
+
+
+CHAGE_CMD = ("chage", "-l", "--", "alice")
+CHAGE_OUT = (
+    "Last password change\t\t\t\t\t: Oct 04, 2026\n"
+    "Password expires\t\t\t\t\t: Jan 02, 2027\n"
+    "Password inactive\t\t\t\t\t: never\n"
+    "Account expires\t\t\t\t\t\t: never\n"
+    "Minimum number of days between password change\t\t: 1\n"
+    "Maximum number of days between password change\t\t: 90\n"
+    "Number of days of warning before password expires\t: 7\n"
+)
+
+
+def chage_runner(
+    stdout: str = CHAGE_OUT, returncode: int = 0, stderr: str = ""
+) -> FakeCommandRunner:
+    return FakeCommandRunner(
+        {CHAGE_CMD: make_result(CHAGE_CMD, returncode=returncode, stdout=stdout, stderr=stderr)}
+    )
+
+
+def test_password_aging_ok() -> None:
+    check = PasswordAging(chage_runner(), "alice", max_days=90, min_days=1, warn_days=7)
+    assert check.run().passed
+    assert "alice" in check.describe() and "90" in check.describe()
+
+
+def test_password_aging_only_requested_fields_are_compared() -> None:
+    assert PasswordAging(chage_runner(), "alice", warn_days=7).run().passed
+
+
+def test_password_aging_mismatch_names_field() -> None:
+    result = PasswordAging(chage_runner(), "alice", max_days=60).run()
+    assert not result.passed
+    assert "90" in result.detail and "60" in result.detail
+
+
+def test_password_aging_reports_every_mismatch() -> None:
+    result = PasswordAging(chage_runner(), "alice", max_days=60, warn_days=14).run()
+    assert not result.passed
+    assert "60" in result.detail and "14" in result.detail
+
+
+def test_password_aging_requires_one_value_and_valid_input() -> None:
+    with pytest.raises(ValueError):
+        PasswordAging(chage_runner(), "alice")
+    with pytest.raises(ValueError):
+        PasswordAging(chage_runner(), "alice", max_days=-2)
+    with pytest.raises(ValueError):
+        PasswordAging(chage_runner(), "bad name", max_days=1)
+
+
+def test_password_aging_permission_denied_shows_root_hint() -> None:
+    runner = chage_runner("", 1, "chage: Permission denied.\n")
+    result = PasswordAging(runner, "alice", max_days=90).run()
+    assert not result.passed and "sudo" in result.detail
+
+
+def test_password_aging_unknown_user() -> None:
+    runner = chage_runner("", 1, "chage: user 'alice' does not exist in /etc/passwd\n")
+    result = PasswordAging(runner, "alice", max_days=90).run()
+    assert not result.passed and "user 'alice' does not exist" in result.detail
+
+
+def test_password_aging_unparseable_output() -> None:
+    assert not PasswordAging(chage_runner("garbage\n"), "alice", max_days=90).run().passed
+    assert not PasswordAging(chage_runner("", 2), "alice", max_days=90).run().passed
+
+
+LOGIN_DEFS_CMD = ("cat", "--", "/etc/login.defs")
+LOGIN_DEFS = (
+    "# comment\n\n"
+    "PASS_MAX_DAYS\t99999\n"
+    "PASS_MIN_DAYS\t0\n"
+    "#PASS_WARN_AGE\t7\n"
+    "PASS_MAX_DAYS   60\n"
+)
+
+
+def defs_runner(stdout: str = LOGIN_DEFS, returncode: int = 0) -> FakeCommandRunner:
+    return FakeCommandRunner(
+        {LOGIN_DEFS_CMD: make_result(LOGIN_DEFS_CMD, returncode=returncode, stdout=stdout)}
+    )
+
+
+def test_login_defs_last_assignment_wins() -> None:
+    assert LoginDefsValue(defs_runner(), "PASS_MAX_DAYS", "60").run().passed
+    result = LoginDefsValue(defs_runner(), "PASS_MAX_DAYS", "99999").run()
+    assert not result.passed and "60" in result.detail
+
+
+def test_login_defs_ignores_comments_and_missing_key() -> None:
+    assert LoginDefsValue(defs_runner(), "PASS_MIN_DAYS", "0").run().passed
+    result = LoginDefsValue(defs_runner(), "PASS_WARN_AGE", "7").run()
+    assert not result.passed and "not set" in result.detail
+
+
+def test_login_defs_unreadable_file() -> None:
+    assert not LoginDefsValue(defs_runner("", 1), "PASS_MAX_DAYS", "60").run().passed
+
+
+def test_login_defs_validates_input() -> None:
+    for key in ("pass_max_days", "PASS MAX", "", "1ABC"):
+        with pytest.raises(ValueError):
+            LoginDefsValue(defs_runner(), key, "1")
+    with pytest.raises(ValueError):
+        LoginDefsValue(defs_runner(), "PASS_MAX_DAYS", "")
