@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
+from rhcsa_sim.checks.files import FilesIdentical, PathHasMode, PathHasOwner
 from rhcsa_sim.testing import FakeCommandRunner, make_result
 
 PATH = "/srv/shared"
@@ -55,3 +55,40 @@ def test_owner_only_and_owner_group() -> None:
 
 def test_owner_missing_path() -> None:
     assert not PathHasOwner(stat_runner("", 1), PATH, "root").run().passed
+
+
+SRC = "/etc/services"
+COPY = "/root/services.bak"
+CMP_CMD = ("cmp", "-s", "--", SRC, COPY)
+
+
+def cmp_runner(returncode: int) -> FakeCommandRunner:
+    return FakeCommandRunner({CMP_CMD: make_result(CMP_CMD, returncode=returncode)})
+
+
+def test_files_identical_pass() -> None:
+    result = FilesIdentical(cmp_runner(0), SRC, COPY).run()
+    assert result.passed and "identical" in result.detail
+
+
+def test_files_identical_differs() -> None:
+    result = FilesIdentical(cmp_runner(1), SRC, COPY).run()
+    assert not result.passed and f"content differs from {SRC}" in result.detail
+
+
+def test_files_identical_missing_or_unreadable() -> None:
+    for rc in (2, 127):
+        result = FilesIdentical(cmp_runner(rc), SRC, COPY).run()
+        assert not result.passed
+        assert f"cannot compare: {COPY} missing or unreadable" in result.detail
+        assert "sudo" in result.detail
+
+
+def test_files_identical_describe_and_validation() -> None:
+    assert FilesIdentical(cmp_runner(0), SRC, COPY).describe() == f"{COPY} is identical to {SRC}"
+    with pytest.raises(ValueError):
+        FilesIdentical(cmp_runner(0), "etc/services", COPY)
+    with pytest.raises(ValueError):
+        FilesIdentical(cmp_runner(0), SRC, "services.bak")
+    with pytest.raises(ValueError):
+        FilesIdentical(cmp_runner(0), SRC, SRC)

@@ -80,3 +80,33 @@ class PathHasOwner:
         if self.group is not None and info.group != self.group:
             return CheckResult(False, f"group is {info.group}, expected {self.group}")
         return CheckResult(True, "ownership is correct")
+
+
+@dataclass(frozen=True, slots=True)
+class FilesIdentical:
+    """`copy` existe y tiene exactamente el mismo contenido que `source`."""
+
+    runner: CommandRunner
+    source: str
+    copy: str
+
+    def __post_init__(self) -> None:
+        validate_absolute_path(self.source)
+        validate_absolute_path(self.copy)
+        if self.source == self.copy:
+            raise ValueError("source and copy must be different paths")
+
+    def describe(self) -> str:
+        return f"{self.copy} is identical to {self.source}"
+
+    def run(self) -> CheckResult:
+        # cmp -s no imprime nada: rc 0 iguales, 1 distintos, 2 ausente/ilegible.
+        result = self.runner.run(["cmp", "-s", "--", self.source, self.copy])
+        if result.returncode == 0:
+            return CheckResult(True, "files are identical")
+        if result.returncode == 1:
+            return CheckResult(False, f"content differs from {self.source}")
+        return CheckResult(
+            False,
+            f"cannot compare: {self.copy} missing or unreadable (paths under /root need sudo)",
+        )
