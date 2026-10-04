@@ -11,7 +11,7 @@ from rhcsa_sim.checks.essentials import (
     HardLinkTo,
     SymlinkTo,
 )
-from rhcsa_sim.checks.files import FilesIdentical, PathHasMode, PathHasOwner
+from rhcsa_sim.checks.files import FilesIdentical, PathHasMode, PathHasOwner, UmaskConfigured
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import (
     FstabMountByUuid,
@@ -31,6 +31,7 @@ from rhcsa_sim.checks.network import (
     ConnectionAutoconnect,
     ConnectionHasDns,
     ConnectionStaticIpv4,
+    ConnectionStaticIpv6,
     HostnameIs,
 )
 from rhcsa_sim.checks.processes import ProcessRunning
@@ -40,7 +41,12 @@ from rhcsa_sim.checks.scripts import (
     ScriptHasShebang,
     ScriptSyntaxValid,
 )
-from rhcsa_sim.checks.security import SshdOptionIs, SudoersValid, UserHasSudoRule
+from rhcsa_sim.checks.security import (
+    AuthorizedKeyPresent,
+    SshdOptionIs,
+    SudoersValid,
+    UserHasSudoRule,
+)
 from rhcsa_sim.checks.selinux import (
     PathHasSelinuxType,
     SelinuxBooleanIs,
@@ -135,19 +141,6 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(LoginDefsValue(runner, "PASS_MAX_DAYS", "60"),),
-            ),
-            Task(
-                id="users-06",
-                block=ObjectiveBlock.USERS_GROUPS,
-                description=(
-                    "Crea el directorio colaborativo /srv/devs con propietario root, grupo 'devs' "
-                    "y modo 2770 (setgid)."
-                ),
-                points=10,
-                checks=(
-                    PathHasOwner(runner, "/srv/devs", "root", "devs"),
-                    PathHasMode(runner, "/srv/devs", "2770"),
-                ),
             ),
             Task(
                 id="files-01",
@@ -342,6 +335,20 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 checks=(HostnameIs(runner, LAB_HOSTNAME),),
             ),
             Task(
+                id="net-03",
+                block=ObjectiveBlock.NETWORKING,
+                description=(
+                    "Anade al perfil de conexion 'exam-static' una direccion IPv6 estatica "
+                    "2001:db8:10::50/64 con gateway 2001:db8:10::1."
+                ),
+                points=10,
+                checks=(
+                    ConnectionStaticIpv6(
+                        runner, "exam-static", "2001:db8:10::50/64", "2001:db8:10::1"
+                    ),
+                ),
+            ),
+            Task(
                 id="se-01",
                 block=ObjectiveBlock.SECURITY,
                 description=(
@@ -396,6 +403,35 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 checks=(
                     SudoersValid(runner),
                     UserHasSudoRule(runner, "alice", "ALL", nopasswd=True),
+                ),
+            ),
+            Task(
+                id="sec-03",
+                block=ObjectiveBlock.SECURITY,
+                description=(
+                    "Configura que el usuario alice tenga por defecto umask 0027 "
+                    "en sus sesiones de shell (/home/alice/.bashrc)."
+                ),
+                points=10,
+                checks=(UmaskConfigured(runner, "/home/alice/.bashrc", "0027"),),
+            ),
+            Task(
+                id="sec-04",
+                block=ObjectiveBlock.SECURITY,
+                description=(
+                    "Como root, genera un par de claves ed25519 sin contrasena en "
+                    "/root/.ssh/id_ed25519 y autorizalo para entrar como alice por SSH "
+                    "(~/.ssh con modo 700 y authorized_keys con modo 600, ambos de alice)."
+                ),
+                points=10,
+                checks=(
+                    AuthorizedKeyPresent(
+                        runner, "/home/alice/.ssh/authorized_keys", "/root/.ssh/id_ed25519.pub"
+                    ),
+                    PathHasOwner(runner, "/home/alice/.ssh", "alice"),
+                    PathHasMode(runner, "/home/alice/.ssh", "700"),
+                    PathHasOwner(runner, "/home/alice/.ssh/authorized_keys", "alice"),
+                    PathHasMode(runner, "/home/alice/.ssh/authorized_keys", "600"),
                 ),
             ),
             Task(

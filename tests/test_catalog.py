@@ -6,8 +6,8 @@ from rhcsa_sim.testing import FakeCommandRunner
 
 def test_catalog_has_expected_well_formed_tasks() -> None:
     tasks = build_catalog(FakeCommandRunner({})).all()
-    ids = ["users-01", "users-02", "users-03", "users-04", "users-05", "users-06", "files-01", "storage-01", "storage-02", "part-01", "swap-01", "fs-01", "fs-02", "fs-03", "fs-04", "fs-05"]
-    ids += ["svc-01", "svc-02", "fw-01", "fw-02", "net-01", "net-02", "se-01", "se-02", "se-03", "se-04", "sec-01", "sec-02"]
+    ids = ["users-01", "users-02", "users-03", "users-04", "users-05", "files-01", "storage-01", "storage-02", "part-01", "swap-01", "fs-01", "fs-02", "fs-03", "fs-04", "fs-05"]
+    ids += ["svc-01", "svc-02", "fw-01", "fw-02", "net-01", "net-02", "net-03", "se-01", "se-02", "se-03", "se-04", "sec-01", "sec-02", "sec-03", "sec-04"]
     ids += ["dnf-01", "pkg-01", "cron-01", "tuned-01"]
     ids += ["scr-01", "scr-02"]
     ids += ["prc-01", "log-01", "run-01"]
@@ -46,7 +46,7 @@ def test_manage_software_block_and_no_containers() -> None:
 
 def test_catalog_totals() -> None:
     tasks = build_catalog(FakeCommandRunner({})).all()
-    assert (len(tasks), sum(t.points for t in tasks)) == (43, 430)
+    assert (len(tasks), sum(t.points for t in tasks)) == (45, 450)
 
 
 def test_deploy_timer_and_time_service_tasks() -> None:
@@ -82,3 +82,20 @@ def test_vfat_nfs_autofs_tasks() -> None:
     assert "/etc/auto.remote" in tasks["fs-05"].description
     assert len(tasks["fs-03"].checks) == 4 and len(tasks["fs-04"].checks) == 2
     assert len(tasks["fs-05"].checks) == 4
+
+
+def test_ipv6_umask_and_ssh_key_tasks() -> None:
+    from rhcsa_sim.models import ObjectiveBlock
+
+    tasks = {t.id: t for t in build_catalog(FakeCommandRunner({})).all()}
+    assert "users-06" not in tasks
+    assert tasks["net-03"].block is ObjectiveBlock.NETWORKING
+    for task_id in ("sec-03", "sec-04"):
+        assert tasks[task_id].block is ObjectiveBlock.SECURITY
+    for task_id in ("net-03", "sec-03", "sec-04"):
+        assert tasks[task_id].points == 10
+    assert "2001:db8:10::50/64" in tasks["net-03"].description
+    assert "2001:db8:10::1" in tasks["net-03"].description
+    assert "0027" in tasks["sec-03"].description and "/home/alice/.bashrc" in tasks["sec-03"].description
+    assert "ed25519" in tasks["sec-04"].description
+    assert [len(tasks[i].checks) for i in ("net-03", "sec-03", "sec-04")] == [1, 1, 5]

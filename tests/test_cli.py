@@ -16,7 +16,12 @@ STAT = ("stat", "-c", "%a %U %G", "--", "/srv/shared")
 PASSWD_BOB = ("getent", "passwd", "bob")
 CHAGE = ("chage", "-l", "--", "alice")
 LOGIN_DEFS = ("cat", "--", "/etc/login.defs")
-STAT_DEVS = ("stat", "-c", "%a %U %G", "--", "/srv/devs")
+STAT_SSH_DIR = ("stat", "-c", "%a %U %G", "--", "/home/alice/.ssh")
+STAT_AUTH_KEYS = ("stat", "-c", "%a %U %G", "--", "/home/alice/.ssh/authorized_keys")
+CAT_BASHRC = ("cat", "--", "/home/alice/.bashrc")
+CAT_AUTH_KEYS = ("cat", "--", "/home/alice/.ssh/authorized_keys")
+CAT_PUBKEY = ("cat", "--", "/root/.ssh/id_ed25519.pub")
+PUBKEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMXtZ7Ugj6bYP2s0DURwIHI4YNPaXt/QmKP2pg2fS1d5 root@servera\n"
 VGS = (
     "vgs", "--reportformat", "json", "--units", "b", "--nosuffix",
     "-o", "vg_name,vg_extent_size", "--", "examvg",
@@ -59,6 +64,10 @@ FW_PORT_RUN = ("firewall-cmd", "--zone=public", "--query-port=8080/tcp")
 NMCLI = (
     "nmcli", "-t", "-f",
     "connection.id,connection.autoconnect,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns",
+    "connection", "show", "id", "exam-static",
+)  # fmt: skip
+NMCLI6 = (
+    "nmcli", "-t", "-f", "connection.id,ipv6.method,ipv6.addresses,ipv6.gateway",
     "connection", "show", "id", "exam-static",
 )  # fmt: skip
 HOSTNAME_STATIC = ("hostnamectl", "hostname", "--static")
@@ -228,6 +237,7 @@ def make_runner(
     timer_calendar: str = "*-*-* 00:00:00",
     boot_arg: str = "systemd.show_status=1",
     lab_ok: bool = True,
+    keys_ok: bool = True,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -249,6 +259,16 @@ def make_runner(
         f"ipv4.method:{net_method}\nipv4.addresses:192.168.122.50/24\n"
         "ipv4.gateway:192.168.122.1\nipv4.dns:192.168.122.1\n"
     )
+    # los ':' de nmcli -t van escapados como '\\:' (fixture derivado de la regla, no observado)
+    nmcli6_out = (
+        f"connection.id:exam-static\nipv6.method:{net_method}\n"
+        "ipv6.addresses:2001\\:db8\\:10\\:\\:50/64\nipv6.gateway:2001\\:db8\\:10\\:\\:1\n"
+    )
+    # keys_ok=False: .bashrc sin umask y authorized_keys sin la clave de root
+    bashrc_out = "# .bashrc\numask 0027\n" if keys_ok else "# .bashrc\numask 022\n"
+    auth_out = PUBKEY if keys_ok else "# vacio\n"
+    pub_rc = 1 if root_rc else 0
+    pub_err = "cat: /root/.ssh/id_ed25519.pub: Permission denied\n" if root_rc else ""
     # sin root, sshd/visudo dicen "Permission denied" y sudo -n pide contrasena
     sshd_err = "/etc/ssh/sshd_config: Permission denied\n" if root_rc else ""
     visudo_err = "visudo: unable to open /etc/sudoers: Permission denied\n" if root_rc else ""
@@ -286,7 +306,14 @@ def make_runner(
                 stdout="" if root_rc else CHAGE_OUT,
             ),
             LOGIN_DEFS: make_result(LOGIN_DEFS, stdout="PASS_MIN_DAYS\t0\nPASS_MAX_DAYS\t60\n"),
-            STAT_DEVS: make_result(STAT_DEVS, stdout="2770 root devs\n"),
+            STAT_SSH_DIR: make_result(STAT_SSH_DIR, stdout="700 alice alice\n"),
+            STAT_AUTH_KEYS: make_result(STAT_AUTH_KEYS, stdout="600 alice alice\n"),
+            CAT_BASHRC: make_result(CAT_BASHRC, stdout=bashrc_out),
+            CAT_AUTH_KEYS: make_result(CAT_AUTH_KEYS, stdout=auth_out),
+            CAT_PUBKEY: make_result(
+                CAT_PUBKEY, returncode=pub_rc, stdout="" if root_rc else PUBKEY, stderr=pub_err
+            ),
+            NMCLI6: make_result(NMCLI6, stdout=nmcli6_out),
             VGS: make_result(VGS, returncode=lvm_rc, stdout=VGS_OUT, stderr=lvm_err),
             PVS: make_result(PVS, returncode=lvm_rc, stdout=PVS_OUT, stderr=lvm_err),
             LVS: make_result(LVS, returncode=lvm_rc, stdout=LVS_OUT, stderr=lvm_err),
@@ -444,18 +471,18 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "430/430" in out and "PASS" in out
+    assert "450/450" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
         group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
         net_method="auto", running_hostname="localhost", root_rc=1, script_rc=1,
-        procs_ok=False, ess_ok=False, copy_rc=1, lab_ok=False,
+        procs_ok=False, ess_ok=False, copy_rc=1, lab_ok=False, keys_ok=False,
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "90/430" in out and "FAIL" in out
+    assert "80/450" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -520,9 +547,11 @@ def test_check_firewall_tasks_ok_and_ko() -> None:
 
 
 def test_check_networking_tasks_ok_and_ko() -> None:
-    for task_id in ("net-01", "net-02"):
+    for task_id in ("net-01", "net-02", "net-03"):
         code, out, _ = run_cli(["check", task_id], make_runner())
         assert code == 0 and f"[OK] {task_id}" in out
+    code, out, _ = run_cli(["check", "net-03"], make_runner(net_method="auto"))
+    assert code == 1 and "[KO] net-03" in out and "ipv6.method is auto, expected manual" in out
     code, out, _ = run_cli(["check", "net-01"], make_runner(net_method="auto"))
     assert code == 1 and "[KO] net-01" in out
     assert "ipv4.method is auto, expected manual" in out
@@ -543,9 +572,15 @@ def test_check_selinux_tasks_ok_and_ko() -> None:
 
 
 def test_check_security_tasks_ok_and_ko() -> None:
-    for task_id in ("sec-01", "sec-02"):
+    for task_id in ("sec-01", "sec-02", "sec-03", "sec-04"):
         code, out, _ = run_cli(["check", task_id], make_runner())
         assert code == 0 and f"[OK] {task_id}" in out
+    code, out, _ = run_cli(["check", "sec-03"], make_runner(keys_ok=False))
+    assert code == 1 and "[KO] sec-03" in out and "umask 0027" in out
+    code, out, _ = run_cli(["check", "sec-04"], make_runner(keys_ok=False))
+    assert code == 1 and "[KO] sec-04" in out and "not found" in out
+    code, out, _ = run_cli(["check", "sec-04"], make_runner(root_rc=1))
+    assert code == 1 and "[KO] sec-04" in out and "sudo" in out
     code, out, _ = run_cli(["check", "sec-01"], make_runner(permit_root_login="yes"))
     assert code == 1 and "[KO] sec-01" in out
     assert "permitrootlogin is yes, expected no" in out
