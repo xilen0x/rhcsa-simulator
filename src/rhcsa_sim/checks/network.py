@@ -14,7 +14,7 @@ from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandResult, CommandRunner
 
 _FIELDS = "connection.id,connection.autoconnect,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns"
-_REQUIRED_KEYS = tuple(_FIELDS.split(","))
+_FIELDS_V6 = "connection.id,ipv6.method,ipv6.addresses,ipv6.gateway"
 _NO_SUCH_PROFILE_RC = 10
 _ESCAPE_RE = re.compile(r"\\([:\\])")
 _UNEXPECTED = "unexpected nmcli output"
@@ -28,7 +28,7 @@ def _query_failed(what: str, result: CommandResult) -> CheckResult:
     return CheckResult(False, f"cannot query {what} (exit {result.returncode})")
 
 
-def _parse_terse(stdout: str) -> dict[str, str] | None:
+def _parse_terse(stdout: str, fields: str) -> dict[str, str] | None:
     """Pares clave:valor de nmcli -t. Se corta en el primer ':' y en el valor se
     deshacen los escapes \\: y \\\\. None si falta una clave, hay lineas sin ':'
     o claves repetidas."""
@@ -40,14 +40,16 @@ def _parse_terse(stdout: str) -> dict[str, str] | None:
         if not sep or not key or key in props:
             return None
         props[key] = _ESCAPE_RE.sub(r"\1", value)
-    if any(key not in props for key in _REQUIRED_KEYS):
+    if any(key not in props for key in fields.split(",")):
         return None
     return props
 
 
-def _query_profile(runner: CommandRunner, name: str) -> dict[str, str] | CheckResult:
+def _query_profile(
+    runner: CommandRunner, name: str, fields: str = _FIELDS
+) -> dict[str, str] | CheckResult:
     # 'id' obliga a leer el argumento como nombre de perfil (no usa '--')
-    result = runner.run(["nmcli", "-t", "-f", _FIELDS, "connection", "show", "id", name])
+    result = runner.run(["nmcli", "-t", "-f", fields, "connection", "show", "id", name])
     if not result.ok:
         if (
             result.returncode == _NO_SUCH_PROFILE_RC
@@ -55,7 +57,7 @@ def _query_profile(runner: CommandRunner, name: str) -> dict[str, str] | CheckRe
         ):
             return CheckResult(False, f"connection profile '{name}' does not exist")
         return _query_failed(f"connection '{name}'", result)
-    props = _parse_terse(result.stdout)
+    props = _parse_terse(result.stdout, fields)
     if props is None:
         return CheckResult(False, f"{_UNEXPECTED} for connection '{name}'")
     return props
@@ -112,6 +114,68 @@ class ConnectionStaticIpv4:
                 shown_gw = str(actual_gw) if actual_gw is not None else "(none)"
                 return CheckResult(False, f"gateway is {shown_gw}, expected {expected_gw}")
         return CheckResult(True, f"'{self.connection}' has static IPv4 {wanted}")
+
+
+def _validate_ipv6_interface(text: str) -> ipaddress.IPv6Interface:
+    """Direccion IPv6 con prefijo obligatorio (addr/n), normalizada."""
+    if "/" not in text:
+        raise ValueError(f"IPv6 address needs a /prefix: {text!r}")
+    try:
+        return ipaddress.IPv6Interface(text)
+    except ValueError:
+        raise ValueError(f"invalid IPv6 interface: {text!r}") from None
+
+
+def _validate_ipv6_address(text: str) -> ipaddress.IPv6Address:
+    try:
+        return ipaddress.IPv6Address(text)
+    except ValueError:
+        raise ValueError(f"invalid IPv6 address: {text!r}") from None
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionStaticIpv6:
+    runner: CommandRunner
+    connection: str
+    address: str
+    gateway: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_connection_name(self.connection)
+        _validate_ipv6_interface(self.address)
+        if self.gateway is not None:
+            _validate_ipv6_address(self.gateway)
+
+    def describe(self) -> str:
+        via = f" via {self.gateway}" if self.gateway is not None else ""
+        return f"{self.connection} has static IPv6 {self.address}{via}"
+
+    def run(self) -> CheckResult:
+        props = _query_profile(self.runner, self.connection, _FIELDS_V6)
+        if isinstance(props, CheckResult):
+            return props
+        method = props["ipv6.method"]
+        if method != "manual":
+            return CheckResult(False, f"ipv6.method is {_shown(method)}, expected manual")
+        wanted = _validate_ipv6_interface(self.address)
+        try:
+            actual = [ipaddress.IPv6Interface(a) for a in _split_values(props["ipv6.addresses"])]
+        except ValueError:
+            return _unexpected(self.connection)
+        if wanted not in actual:
+            shown = ", ".join(str(a) for a in actual) or "(none)"
+            return CheckResult(False, f"address {wanted} not configured (addresses: {shown})")
+        if self.gateway is not None:
+            expected_gw = _validate_ipv6_address(self.gateway)
+            raw_gw = props["ipv6.gateway"].strip()
+            try:
+                actual_gw = ipaddress.IPv6Address(raw_gw) if raw_gw else None
+            except ValueError:
+                return _unexpected(self.connection)
+            if actual_gw != expected_gw:
+                shown_gw = str(actual_gw) if actual_gw is not None else "(none)"
+                return CheckResult(False, f"gateway is {shown_gw}, expected {expected_gw}")
+        return CheckResult(True, f"'{self.connection}' has static IPv6 {wanted}")
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from rhcsa_sim.checks._validation import (
@@ -9,6 +10,9 @@ from rhcsa_sim.checks._validation import (
 )
 from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandRunner
+
+_UMASK_VALUE_RE = re.compile(r"[0-7]{3,4}")
+_UMASK_LINE_RE = re.compile(r"umask\s+([0-7]{3,4})\s*(?:#.*)?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,3 +112,33 @@ class FilesIdentical:
             return CheckResult(False, f"content differs from {self.source}")
         hint = " (paths under /root need sudo)" if self.copy.startswith("/root/") else ""
         return CheckResult(False, f"cannot compare: {self.copy} missing or unreadable{hint}")
+
+
+@dataclass(frozen=True, slots=True)
+class UmaskConfigured:
+    """Alguna linea no comentada del fichero es `umask <valor>` (solo lectura estatica;
+    el shell del alumno nunca se ejecuta). 027 y 0027 son equivalentes."""
+
+    runner: CommandRunner
+    path: str
+    umask: str
+
+    def __post_init__(self) -> None:
+        validate_absolute_path(self.path)
+        if not _UMASK_VALUE_RE.fullmatch(self.umask):
+            raise ValueError(f"umask must be 3-4 octal digits: {self.umask!r}")
+
+    def describe(self) -> str:
+        return f"{self.path} sets umask {self.umask}"
+
+    def run(self) -> CheckResult:
+        result = self.runner.run(["cat", "--", self.path])
+        if not result.ok:
+            hint = " (run with sudo)" if "Permission denied" in result.stderr else ""
+            return CheckResult(False, f"cannot read '{self.path}'{hint}")
+        wanted = int(self.umask, 8)
+        for line in result.stdout.splitlines():
+            match = _UMASK_LINE_RE.fullmatch(line.strip())
+            if match is not None and int(match.group(1), 8) == wanted:
+                return CheckResult(True, f"umask {self.umask} found")
+        return CheckResult(False, f"no line 'umask {self.umask}' in {self.path}")

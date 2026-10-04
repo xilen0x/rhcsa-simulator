@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rhcsa_sim.checks.files import FilesIdentical, PathHasMode, PathHasOwner
+from rhcsa_sim.checks.files import FilesIdentical, PathHasMode, PathHasOwner, UmaskConfigured
 from rhcsa_sim.testing import FakeCommandRunner, make_result
 
 PATH = "/srv/shared"
@@ -101,3 +101,66 @@ def test_files_identical_describe_and_validation() -> None:
         FilesIdentical(cmp_runner(0), SRC, "services.bak")
     with pytest.raises(ValueError):
         FilesIdentical(cmp_runner(0), SRC, SRC)
+
+
+# --- UmaskConfigured ---
+BASHRC = "/home/alice/.bashrc"
+CAT_BASHRC = ("cat", "--", BASHRC)
+
+
+def cat_runner(stdout: str, returncode: int = 0, stderr: str = "") -> FakeCommandRunner:
+    return FakeCommandRunner(
+        {CAT_BASHRC: make_result(CAT_BASHRC, returncode=returncode, stdout=stdout, stderr=stderr)}
+    )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "umask 027\n",
+        "umask 0027\n",
+        "# .bashrc\nalias ll='ls -l'\n  umask   027   # restrictivo\n",
+        "umask 022\numask 027\n",
+        "\tumask 0027",
+    ],
+)
+def test_umask_found(content: str) -> None:
+    assert UmaskConfigured(cat_runner(content), BASHRC, "027").run().passed
+    assert UmaskConfigured(cat_runner(content), BASHRC, "0027").run().passed
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "",
+        "# umask 027\n",
+        "umask 022\n",
+        "umask 27\n",
+        "umask -S\n",
+        "umask 0270\n",
+        "echo umask 027\n",
+        "umask 027 && true\n",
+        "umaskx 027\n",
+    ],
+)
+def test_umask_not_found(content: str) -> None:
+    result = UmaskConfigured(cat_runner(content), BASHRC, "027").run()
+    assert not result.passed and "umask 027" in result.detail
+
+
+def test_umask_unreadable_and_root_hint() -> None:
+    result = UmaskConfigured(cat_runner("", 1, "cat: x: No such file or directory\n"), BASHRC, "027").run()
+    assert not result.passed and "cannot read" in result.detail and "sudo" not in result.detail
+    err = "cat: x: Permission denied\n"
+    assert "sudo" in UmaskConfigured(cat_runner("", 1, err), BASHRC, "027").run().detail
+
+
+def test_umask_describe_and_validation() -> None:
+    assert UmaskConfigured(cat_runner(""), BASHRC, "027").describe() == (
+        "/home/alice/.bashrc sets umask 027"
+    )
+    for bad in ("", "02", "00027", "028", "u=rwx", "-S"):
+        with pytest.raises(ValueError):
+            UmaskConfigured(cat_runner(""), BASHRC, bad)
+    with pytest.raises(ValueError):
+        UmaskConfigured(cat_runner(""), "relative", "027")

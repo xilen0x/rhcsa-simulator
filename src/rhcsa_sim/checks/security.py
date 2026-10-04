@@ -3,7 +3,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from rhcsa_sim.checks._validation import validate_account_name, validate_sshd_keyword
+from rhcsa_sim.checks._validation import (
+    validate_absolute_path,
+    validate_account_name,
+    validate_sshd_keyword,
+)
 from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandResult, CommandRunner
 
@@ -180,3 +184,61 @@ class UserHasSudoRule:
         if self.nopasswd and not any(nopasswd for _, nopasswd in grants):
             return CheckResult(False, "rule requires a password; expected NOPASSWD")
         return CheckResult(True, f"{self.user} may run {self.command} with sudo")
+
+
+def _read_file(runner: CommandRunner, path: str) -> str | CheckResult:
+    result = runner.run(["cat", "--", path])
+    if result.ok:
+        return result.stdout
+    if "Permission denied" in result.stderr:
+        hint = " (permission denied; run with sudo)"
+    elif path.startswith(("/root/", "/home/")):
+        hint = " (paths under /root and /home may need sudo)"
+    else:
+        hint = ""
+    return CheckResult(False, f"cannot read '{path}'{hint}")
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizedKeyPresent:
+    """El tipo y blob base64 de `pubkey_file` figuran en una linea no comentada de
+    `authorized_keys` (se admite un prefijo de opciones). Solo lectura de ficheros."""
+
+    runner: CommandRunner
+    authorized_keys: str
+    pubkey_file: str
+
+    def __post_init__(self) -> None:
+        validate_absolute_path(self.authorized_keys)
+        validate_absolute_path(self.pubkey_file)
+
+    def describe(self) -> str:
+        return f"{self.authorized_keys} authorizes the key in {self.pubkey_file}"
+
+    def run(self) -> CheckResult:
+        pub = _read_file(self.runner, self.pubkey_file)
+        if isinstance(pub, CheckResult):
+            return pub
+        pair = _key_pair(pub)
+        if pair is None:
+            return CheckResult(False, f"'{self.pubkey_file}' is not a valid public key")
+        keys = _read_file(self.runner, self.authorized_keys)
+        if isinstance(keys, CheckResult):
+            return keys
+        for line in keys.splitlines():
+            tokens = line.split()
+            if not tokens or tokens[0].startswith("#"):
+                continue
+            if any(tokens[i : i + 2] == list(pair) for i in range(len(tokens) - 1)):
+                return CheckResult(True, f"key {pair[0]} found in {self.authorized_keys}")
+        return CheckResult(False, f"key from {self.pubkey_file} not found in {self.authorized_keys}")
+
+
+def _key_pair(text: str) -> tuple[str, str] | None:
+    """(tipo, blob) de la primera linea no comentaria con al menos dos campos."""
+    for line in text.splitlines():
+        tokens = line.split()
+        if not tokens or tokens[0].startswith("#"):
+            continue
+        return (tokens[0], tokens[1]) if len(tokens) >= 2 else None
+    return None

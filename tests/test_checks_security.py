@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from rhcsa_sim.checks.security import SshdOptionIs, SudoersValid, UserHasSudoRule
+from rhcsa_sim.checks.security import (
+    AuthorizedKeyPresent,
+    SshdOptionIs,
+    SudoersValid,
+    UserHasSudoRule,
+)
 from rhcsa_sim.models import Check
 from rhcsa_sim.testing import FakeCommandRunner, make_result
 
@@ -255,3 +260,89 @@ def test_sudo_invalid_user(user: str) -> None:
 def test_sudo_invalid_command(command: str) -> None:
     with pytest.raises(ValueError):
         UserHasSudoRule(FakeCommandRunner({}), "alice", command)
+
+
+# --- AuthorizedKeyPresent ---
+AK = "/home/alice/.ssh/authorized_keys"
+PUB = "/root/.ssh/id_ed25519.pub"
+CAT_AK = ("cat", "--", AK)
+CAT_PUB = ("cat", "--", PUB)
+BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIKd0xqF7cR9mJp2hQ8vYw3tLz5nB1uXoE6sDgVfHiMkA"
+OTHER = "AAAAC3NzaC1lZDI1NTE5AAAAIOtherOtherOtherOtherOtherOtherOtherOtherOth"
+PUB_LINE = f"ssh-ed25519 {BLOB} root@servera\n"
+
+
+def ak_runner(
+    ak_out: str,
+    pub_out: str = PUB_LINE,
+    ak_rc: int = 0,
+    pub_rc: int = 0,
+    ak_err: str = "",
+    pub_err: str = "",
+) -> FakeCommandRunner:
+    return FakeCommandRunner(
+        {
+            CAT_AK: make_result(CAT_AK, returncode=ak_rc, stdout=ak_out, stderr=ak_err),
+            CAT_PUB: make_result(CAT_PUB, returncode=pub_rc, stdout=pub_out, stderr=pub_err),
+        }
+    )
+
+
+def key_check(runner: FakeCommandRunner) -> Check:
+    return AuthorizedKeyPresent(runner, AK, PUB)
+
+
+@pytest.mark.parametrize(
+    "ak",
+    [
+        f"ssh-ed25519 {BLOB} root@servera\n",
+        f"ssh-ed25519 {BLOB}\n",
+        f"# comentario\nssh-ed25519 {OTHER} x\nssh-ed25519 {BLOB} y\n",
+        f'command="/bin/true",no-pty ssh-ed25519 {BLOB} root@servera\n',
+        f"from=\"10.0.0.0/8\" ssh-ed25519 {BLOB}",
+        f"ssh-ed25519\t{BLOB}\troot@servera\n",
+    ],
+)
+def test_key_present(ak: str) -> None:
+    assert key_check(ak_runner(ak)).run().passed
+
+
+@pytest.mark.parametrize(
+    "ak",
+    [
+        "",
+        f"# ssh-ed25519 {BLOB} root@servera\n",
+        f"ssh-ed25519 {OTHER} root@servera\n",
+        f"ssh-rsa {BLOB} root@servera\n",
+        f"ssh-ed25519 {BLOB}extra root@servera\n",
+        f"ssh-ed25519 {BLOB[:-4]}\n",
+    ],
+)
+def test_key_absent(ak: str) -> None:
+    result = key_check(ak_runner(ak)).run()
+    assert not result.passed and "not found" in result.detail
+
+
+def test_key_unreadable_files_and_hints() -> None:
+    result = key_check(ak_runner("", ak_rc=1, ak_err="cat: x: No such file or directory\n")).run()
+    assert not result.passed and "cannot read" in result.detail and "may need sudo" in result.detail
+    result = key_check(ak_runner("", ak_rc=1, ak_err="cat: x: Permission denied\n")).run()
+    assert not result.passed and "sudo" in result.detail
+    result = key_check(ak_runner(PUB_LINE, pub_rc=1, pub_err="cat: x: Permission denied\n")).run()
+    assert not result.passed and PUB in result.detail and "sudo" in result.detail
+    result = key_check(ak_runner(PUB_LINE, pub_out="", pub_rc=1)).run()
+    assert not result.passed and PUB in result.detail and "sudo" in result.detail
+
+
+@pytest.mark.parametrize("pub", ["", "# only a comment\n", "ssh-ed25519\n", "\n"])
+def test_key_malformed_pubkey(pub: str) -> None:
+    result = key_check(ak_runner(f"ssh-ed25519 {BLOB}\n", pub_out=pub)).run()
+    assert not result.passed and "not a valid public key" in result.detail
+
+
+def test_key_describe_and_validation() -> None:
+    assert key_check(ak_runner("")).describe() == f"{AK} authorizes the key in {PUB}"
+    with pytest.raises(ValueError):
+        AuthorizedKeyPresent(ak_runner(""), "relative", PUB)
+    with pytest.raises(ValueError):
+        AuthorizedKeyPresent(ak_runner(""), AK, "relative.pub")

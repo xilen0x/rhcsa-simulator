@@ -6,6 +6,7 @@ from rhcsa_sim.checks.network import (
     ConnectionAutoconnect,
     ConnectionHasDns,
     ConnectionStaticIpv4,
+    ConnectionStaticIpv6,
     HostnameIs,
 )
 from rhcsa_sim.models import Check
@@ -311,3 +312,87 @@ def test_invalid_parameters() -> None:
     for host in ("", "Servera", "a..b", "-a"):
         with pytest.raises(ValueError):
             HostnameIs(runner, host)
+
+
+# --- IPv6 ---
+# Los ':' de los valores van escapados como '\:' (regla de nmcli -t; fixture derivado
+# de esa regla, no observado: la VM de pruebas no tiene IPv6 manual).
+FIELDS6 = "connection.id,ipv6.method,ipv6.addresses,ipv6.gateway"
+SHOW6 = ("nmcli", "-t", "-f", FIELDS6, "connection", "show", "id", "exam-static")
+ADDR6 = "2001:db8:10::50/64"
+GW6 = "2001:db8:10::1"
+
+
+def esc6(text: str) -> str:
+    return text.replace(":", "\\:")
+
+
+def profile6_out(
+    method: str = "manual", addresses: str = esc6(ADDR6), gateway: str = esc6(GW6)
+) -> str:
+    return (
+        "connection.id:exam-static\n"
+        f"ipv6.method:{method}\n"
+        f"ipv6.addresses:{addresses}\n"
+        f"ipv6.gateway:{gateway}\n"
+    )
+
+
+def fake6(stdout: str, returncode: int = 0, stderr: str = "") -> FakeCommandRunner:
+    return FakeCommandRunner(
+        {SHOW6: make_result(SHOW6, returncode=returncode, stdout=stdout, stderr=stderr)}
+    )
+
+
+def test_ipv6_passes_with_escaped_colons() -> None:
+    check = ConnectionStaticIpv6(fake6(profile6_out()), "exam-static", ADDR6, GW6)
+    assert check.run().passed
+    assert check.describe() == f"exam-static has static IPv6 {ADDR6} via {GW6}"
+
+
+def test_ipv6_matches_compressed_and_expanded_forms() -> None:
+    out = profile6_out(addresses=esc6("2001:0db8:0010:0000:0000:0000:0000:0050/64"))
+    assert ConnectionStaticIpv6(fake6(out), "exam-static", ADDR6).run().passed
+
+
+def test_ipv6_accepts_several_addresses_and_no_gateway_check() -> None:
+    out = profile6_out(addresses=esc6(f"fd00::5/64, {ADDR6}"), gateway="")
+    assert ConnectionStaticIpv6(fake6(out), "exam-static", ADDR6).run().passed
+
+
+@pytest.mark.parametrize(
+    ("out", "text"),
+    [
+        (profile6_out(method="auto"), "ipv6.method is auto, expected manual"),
+        (profile6_out(addresses=""), "not configured"),
+        (profile6_out(addresses=esc6("2001:db8:10::51/64")), "not configured"),
+        (profile6_out(addresses=esc6("2001:db8:10::50/48")), "not configured"),
+        (profile6_out(gateway=""), "gateway is (none)"),
+        (profile6_out(gateway=esc6("2001:db8:10::2")), "gateway is 2001:db8:10::2"),
+        (profile6_out(addresses="nonsense"), "unexpected nmcli output"),
+        (profile6_out().replace("ipv6.method:manual\n", ""), "unexpected nmcli output"),
+    ],
+)
+def test_ipv6_failures(out: str, text: str) -> None:
+    result = ConnectionStaticIpv6(fake6(out), "exam-static", ADDR6, GW6).run()
+    assert not result.passed and text in result.detail
+
+
+def test_ipv6_missing_profile_and_query_failure() -> None:
+    runner = fake6("", 10, "Error: no such connection profile.\n")
+    result = ConnectionStaticIpv6(runner, "exam-static", ADDR6).run()
+    assert not result.passed and "does not exist" in result.detail
+    result = ConnectionStaticIpv6(fake6("", 1), "exam-static", ADDR6).run()
+    assert not result.passed and "exit 1" in result.detail
+
+
+@pytest.mark.parametrize("addr", ["2001:db8::50", "2001:db8::50/129", "192.168.1.1/24", "", "zz::1/64"])
+def test_ipv6_rejects_invalid_address(addr: str) -> None:
+    with pytest.raises(ValueError):
+        ConnectionStaticIpv6(FakeCommandRunner({}), "exam-static", addr)
+
+
+@pytest.mark.parametrize("gw", ["", "192.168.1.1", "2001:db8::1/64", "zz"])
+def test_ipv6_rejects_invalid_gateway(gw: str) -> None:
+    with pytest.raises(ValueError):
+        ConnectionStaticIpv6(FakeCommandRunner({}), "exam-static", ADDR6, gw)
