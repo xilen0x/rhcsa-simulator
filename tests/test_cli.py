@@ -741,3 +741,27 @@ def test_no_args_eof_exits_zero_and_uses_ascii_for_non_utf8_stream() -> None:
     out = AsciiOut()
     code = main([], runner=make_runner(), stdout=out, env={}, stdin=io.StringIO(""))
     assert code == 0 and out.getvalue().isascii()
+
+
+class TtyOut(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+CLEAR = "\x1b[H\x1b[2J"
+
+
+@pytest.mark.parametrize(
+    ("out", "env", "clears"),
+    [
+        (TtyOut(), {}, True),
+        (TtyOut(), {"TERM": "dumb"}, False),
+        (io.StringIO(), {}, False),
+    ],
+)
+def test_no_args_clears_screen_only_on_a_real_terminal(
+    out: io.StringIO, env: dict[str, str], clears: bool
+) -> None:
+    code = main([], runner=make_runner(), stdout=out, env=env, stdin=io.StringIO("n\nq\n"))
+    assert code == 0
+    assert (CLEAR in out.getvalue()) is clears

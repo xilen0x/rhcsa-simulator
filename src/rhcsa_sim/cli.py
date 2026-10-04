@@ -123,7 +123,8 @@ def main(
                 raise EOFError
             return line
 
-        return run_session(registry, ui, read, out)
+        clear_screen = out.isatty() and environ.get("TERM") != "dumb"
+        return run_session(registry, ui, read, out, clear_screen=clear_screen)
     if command == "list":
         return _cmd_list(registry, out)
     if command == "show":

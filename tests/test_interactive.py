@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-from rhcsa_sim.interactive import SessionState, dispatch, run_session
+from rhcsa_sim.interactive import PROMPT, SessionState, dispatch, run_session
 from rhcsa_sim.models import CheckResult, ObjectiveBlock, Task
 from rhcsa_sim.registry import TaskRegistry
 from rhcsa_sim.ui import Ui
@@ -201,3 +201,74 @@ def test_status_badge_follows_results() -> None:
     assert "failed" in send(state, "s")[0]
 
 
+
+
+CLEAR = "\x1b[H\x1b[2J"
+BAR = "[Enter] next"
+
+
+def screen_session(lines: list[str], tasks: tuple[Task, ...]) -> str:
+    feed = iter(lines)
+
+    def read() -> str:
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    out = io.StringIO()
+    run_session(TaskRegistry(tasks), PLAIN, read, out, clear_screen=True)
+    return out.getvalue()
+
+
+def test_navigation_clears_screen_and_shows_only_new_task_and_menu() -> None:
+    tasks, _ = make_tasks()
+    out = screen_session(["n"], tasks)
+    last = out.split(CLEAR)[-1]
+    assert "Task 2/3" in last and BAR in last
+    assert "Task 1/3" not in last and "RHCSA EX200" not in last
+    assert last.index("Task 2/3") < last.index(BAR)
+
+
+def test_check_clears_and_shows_task_result_and_menu() -> None:
+    tasks, _ = make_tasks()
+    out = screen_session(["c"], tasks)
+    last = out.split(CLEAR)[-1]
+    assert "Task 1/3" in last and "detail-ok" in last and BAR in last
+    assert last.index("Task 1/3") < last.index("detail-ok") < last.index(BAR)
+
+
+def test_menu_follows_every_reply() -> None:
+    tasks, _ = make_tasks()
+    feed = iter(["l", "h", "zz", "p"])
+    out = io.StringIO()
+    before_each_read: list[str] = []
+
+    def read() -> str:
+        before_each_read.append(out.getvalue())
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    run_session(TaskRegistry(tasks), PLAIN, read, out, clear_screen=True)
+    assert len(before_each_read) == 5
+    for screen in before_each_read:
+        last_line = screen.removesuffix(PROMPT).splitlines()[-1]
+        assert last_line.startswith(BAR)
+
+
+def test_non_navigation_replies_do_not_clear() -> None:
+    tasks, _ = make_tasks()
+    state = SessionState(tasks)
+    for line in ("l", "h", "a", "zz", "p", "99"):
+        assert dispatch(state, PLAIN, line).clear is False
+    for line in ("n", "p", "3", "s", "c"):
+        assert dispatch(state, PLAIN, line).clear is True
+
+
+def test_no_clear_sequence_when_disabled() -> None:
+    tasks, _ = make_tasks()
+    _, out = session(["n", "c", "q"], tasks)
+    assert CLEAR not in out
+    assert out.count(BAR) == 3
