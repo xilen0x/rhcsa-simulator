@@ -18,8 +18,8 @@ from rhcsa_sim.testing import FakeCommandRunner, make_result
 
 IMAGE = "registry.access.redhat.com/ubi10/ubi-minimal"
 ID_ALICE = ("id", "-u", "--", "alice")
-PREFIX = ("runuser", "-u", "alice", "--", "env", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
-NO_XDG_PREFIX = ("runuser", "-u", "alice", "--", "env", "-u", "XDG_RUNTIME_DIR", "podman")
+PREFIX = ("runuser", "-u", "alice", "--", "env", "-C", "/", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
+NO_XDG_PREFIX = ("runuser", "-u", "alice", "--", "env", "-C", "/", "-u", "XDG_RUNTIME_DIR", "podman")
 RUNDIR = ("stat", "-c", "%F", "--", "/run/user/1234")
 LINGER = ("stat", "-c", "%F", "--", "/var/lib/systemd/linger/alice")
 GETENT = ("getent", "passwd", "alice")

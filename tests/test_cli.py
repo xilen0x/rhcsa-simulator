@@ -122,7 +122,7 @@ JOURNAL_CONF = ("systemd-analyze", "cat-config", "systemd/journald.conf")
 JOURNAL_DIR = ("stat", "-L", "-c", "%F", "--", "/var/log/journal")
 CONTAINER_IMAGE = "registry.access.redhat.com/ubi10/httpd-24"
 ID_ALICE = ("id", "-u", "--", "alice")
-PODMAN = ("runuser", "-u", "alice", "--", "env", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
+PODMAN = ("runuser", "-u", "alice", "--", "env", "-C", "/", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
 RUNDIR = ("stat", "-c", "%F", "--", "/run/user/1234")
 LINGER = ("stat", "-c", "%F", "--", "/var/lib/systemd/linger/alice")
 IMAGE_EXISTS = (*PODMAN, "image", "exists", "--", CONTAINER_IMAGE)
