@@ -57,6 +57,8 @@ from rhcsa_sim.checks.storage import (
 )
 from rhcsa_sim.checks.users import (
     GroupExists,
+    LoginDefsValue,
+    PasswordAging,
     UserExists,
     UserHasShell,
     UserHasUid,
@@ -99,6 +101,52 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                     UserHasUid(runner, "alice", 1234),
                     UserHasShell(runner, "alice", "/bin/bash"),
                     UserInGroup(runner, "alice", "devs"),
+                ),
+            ),
+            Task(
+                id="users-03",
+                block=ObjectiveBlock.USERS_GROUPS,
+                description=(
+                    "Crea el usuario 'bob' con shell /usr/sbin/nologin "
+                    "(sin acceso interactivo)."
+                ),
+                points=10,
+                checks=(
+                    UserExists(runner, "bob"),
+                    UserHasShell(runner, "bob", "/usr/sbin/nologin"),
+                ),
+            ),
+            Task(
+                id="users-04",
+                block=ObjectiveBlock.USERS_GROUPS,
+                description=(
+                    "Configura la contrasena de 'alice' para que caduque cada 90 dias "
+                    "como maximo, con aviso 7 dias antes."
+                ),
+                points=10,
+                checks=(PasswordAging(runner, "alice", max_days=90, warn_days=7),),
+            ),
+            Task(
+                id="users-05",
+                block=ObjectiveBlock.USERS_GROUPS,
+                description=(
+                    "Configura que los usuarios nuevos tengan por defecto una caducidad "
+                    "maxima de contrasena de 60 dias (PASS_MAX_DAYS en /etc/login.defs)."
+                ),
+                points=10,
+                checks=(LoginDefsValue(runner, "PASS_MAX_DAYS", "60"),),
+            ),
+            Task(
+                id="users-06",
+                block=ObjectiveBlock.USERS_GROUPS,
+                description=(
+                    "Crea el directorio colaborativo /srv/devs con grupo 'devs' "
+                    "y modo 2770 (setgid)."
+                ),
+                points=10,
+                checks=(
+                    PathHasOwner(runner, "/srv/devs", "root", "devs"),
+                    PathHasMode(runner, "/srv/devs", "2770"),
                 ),
             ),
             Task(

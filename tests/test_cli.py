@@ -13,6 +13,10 @@ GROUP = ("getent", "group", "devs")
 PASSWD = ("getent", "passwd", "alice")
 IDG = ("id", "-Gn", "--", "alice")
 STAT = ("stat", "-c", "%a %U %G", "--", "/srv/shared")
+PASSWD_BOB = ("getent", "passwd", "bob")
+CHAGE = ("chage", "-l", "--", "alice")
+LOGIN_DEFS = ("cat", "--", "/etc/login.defs")
+STAT_DEVS = ("stat", "-c", "%a %U %G", "--", "/srv/devs")
 VGS = (
     "vgs", "--reportformat", "json", "--units", "b", "--nosuffix",
     "-o", "vg_name,vg_extent_size", "--", "examvg",
@@ -120,6 +124,11 @@ SYSINFO_GREP = ("grep", "-Fxq", "--", HOSTNAME, "/root/sysinfo.txt")
 PS_CROND = ("ps", "-C", "crond", "-o", "pid=,ni=,user:32=,stat=,comm=")
 JOURNAL_CONF = ("systemd-analyze", "cat-config", "systemd/journald.conf")
 JOURNAL_DIR = ("stat", "-L", "-c", "%F", "--", "/var/log/journal")
+CHAGE_OUT = (
+    "Minimum number of days between password change\t\t: 0\n"
+    "Maximum number of days between password change\t\t: 90\n"
+    "Number of days of warning before password expires\t: 7\n"
+)
 ARCHIVE = "/root/etc-backup.tar.gz"
 ARCHIVE_MIME = ("file", "-b", "--mime-type", "--", ARCHIVE)
 ARCHIVE_LIST = ("tar", "-tf", ARCHIVE)
@@ -241,6 +250,13 @@ def make_runner(
             PASSWD: make_result(PASSWD, stdout="alice:x:1234:1234:A:/home/alice:/bin/bash\n"),
             IDG: make_result(IDG, stdout="alice devs\n"),
             STAT: make_result(STAT, stdout="2770 root devs\n"),
+            PASSWD_BOB: make_result(PASSWD_BOB, stdout="bob:x:1235:1235:B:/home/bob:/usr/sbin/nologin\n"),
+            CHAGE: make_result(
+                CHAGE, returncode=root_rc, stderr="chage: Permission denied.\n" if root_rc else "",
+                stdout="" if root_rc else CHAGE_OUT,
+            ),
+            LOGIN_DEFS: make_result(LOGIN_DEFS, stdout="PASS_MIN_DAYS\t0\nPASS_MAX_DAYS\t60\n"),
+            STAT_DEVS: make_result(STAT_DEVS, stdout="2770 root devs\n"),
             VGS: make_result(VGS, returncode=lvm_rc, stdout=VGS_OUT, stderr=lvm_err),
             PVS: make_result(PVS, returncode=lvm_rc, stdout=PVS_OUT, stderr=lvm_err),
             LVS: make_result(LVS, returncode=lvm_rc, stdout=LVS_OUT, stderr=lvm_err),
@@ -367,7 +383,7 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "340/340" in out and "PASS" in out
+    assert "380/380" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
@@ -378,7 +394,7 @@ def test_check_all_with_failure() -> None:
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "60/340" in out and "FAIL" in out
+    assert "90/380" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
