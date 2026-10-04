@@ -74,6 +74,10 @@ Each view replaces the previous one, and the command bar always stays at the bot
 
 Opening the menu (`sudo .venv/bin/rhcsa-sim`):
 
+![rhcsa-sim interactive menu with the exam timer](docs/menu.png)
+
+The same screen as text:
+
 ```text
                                                           Time left 02:41:07
 ╭──────────────────────────────────────────────────────────────────────────╮
