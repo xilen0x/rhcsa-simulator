@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from rhcsa_sim.checks._units import MIB
 from rhcsa_sim.checks.acl import PathHasAclEntry
+from rhcsa_sim.checks.autofs import AutofsMapEntry, AutofsMasterEntry
 from rhcsa_sim.checks.blockdev import PartitionExists, SwapActive, SwapInFstabByUuid
 from rhcsa_sim.checks.boot import KernelArgPresent
 from rhcsa_sim.checks.essentials import (
@@ -12,7 +13,13 @@ from rhcsa_sim.checks.essentials import (
 )
 from rhcsa_sim.checks.files import FilesIdentical, PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
-from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
+from rhcsa_sim.checks.filesystems import (
+    FstabMountByUuid,
+    FstabNfsEntry,
+    FstabUuidMatchesMount,
+    MountedAt,
+    NfsMountedAt,
+)
 from rhcsa_sim.checks.logs import JournalPersistent
 from rhcsa_sim.checks.maintenance import (
     CronEntryExists,
@@ -223,6 +230,53 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(PathHasAclEntry(runner, "/data", "user:alice:rwx"),),
+            ),
+            Task(
+                id="fs-03",
+                block=ObjectiveBlock.FILE_SYSTEMS,
+                description=(
+                    "Crea la particion /dev/sdb3 de 256 MiB, formateala como VFAT y "
+                    "montala de forma persistente en /mnt/vfat usando su UUID en /etc/fstab."
+                ),
+                points=10,
+                checks=(
+                    PartitionExists(runner, "/dev/sdb3", 240 * MIB, 300 * MIB),
+                    MountedAt(runner, "/mnt/vfat", "vfat", "/dev/sdb3"),
+                    FstabMountByUuid(runner, "/mnt/vfat", "vfat"),
+                    FstabUuidMatchesMount(runner, "/mnt/vfat"),
+                ),
+            ),
+            Task(
+                id="fs-04",
+                block=ObjectiveBlock.FILE_SYSTEMS,
+                description=(
+                    "Monta de forma persistente el recurso NFS localhost:/srv/nfsexport "
+                    "en /mnt/nfs (nfs4) mediante /etc/fstab. Si practicas solo, puedes "
+                    "exportar /srv/nfsexport desde tu propia maquina."
+                ),
+                points=10,
+                checks=(
+                    NfsMountedAt(runner, "/mnt/nfs", "localhost:/srv/nfsexport"),
+                    FstabNfsEntry(runner, "/mnt/nfs", "localhost:/srv/nfsexport"),
+                ),
+            ),
+            Task(
+                id="fs-05",
+                block=ObjectiveBlock.FILE_SYSTEMS,
+                description=(
+                    "Configura autofs con un montaje indirecto en /remote y el mapa "
+                    "/etc/auto.remote, donde la clave 'data' monte localhost:/srv/nfsexport "
+                    "con -fstype=nfs4,rw. Deja autofs habilitado y en ejecucion."
+                ),
+                points=10,
+                checks=(
+                    AutofsMasterEntry(runner, "/remote", "/etc/auto.remote"),
+                    AutofsMapEntry(
+                        runner, "/etc/auto.remote", "data", "localhost:/srv/nfsexport", "nfs4"
+                    ),
+                    UnitFileStateIs(runner, "autofs.service", "enabled"),
+                    UnitActiveStateIs(runner, "autofs.service", "active"),
+                ),
             ),
             Task(
                 id="svc-01",

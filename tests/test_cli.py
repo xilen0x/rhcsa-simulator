@@ -84,6 +84,46 @@ FSTAB_SWAP_OUT = (
     f'{{"filesystems": [{{"target": "none", "source": "UUID={SWAP_UUID}", '
     '"fstype": "swap", "options": "defaults"}]}'
 )
+LSBLK_SDB3 = (
+    "lsblk", "-J", "-l", "-b", "-o", "PATH,KNAME,SIZE,TYPE,FSTYPE,UUID,PARTTYPENAME",
+    "--", "/dev/sdb3",
+)  # fmt: skip
+VFAT_UUID = "1A2B-3C4D"
+LSBLK_SDB3_OUT = (
+    '{"blockdevices": [{"path": "/dev/sdb3", "kname": "sdb3", "size": 268435456, '
+    f'"type": "part", "fstype": "vfat", "uuid": "{VFAT_UUID}", '
+    '"parttypename": "Linux filesystem"}]}'
+)
+MOUNT_VFAT = ("findmnt", "-J", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/mnt/vfat")
+FSTAB_VFAT = (
+    "findmnt", "-J", "--fstab", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/mnt/vfat",
+)  # fmt: skip
+BLKID_SDB3 = ("blkid", "-o", "value", "-s", "UUID", "--", "/dev/sdb3")
+MOUNT_VFAT_OUT = (
+    '{"filesystems": [{"target": "/mnt/vfat", "source": "/dev/sdb3", '
+    '"fstype": "vfat", "options": "rw,relatime"}]}'
+)
+FSTAB_VFAT_OUT = (
+    f'{{"filesystems": [{{"target": "/mnt/vfat", "source": "UUID={VFAT_UUID}", '
+    '"fstype": "vfat", "options": "defaults"}]}'
+)
+NFS_SOURCE = "localhost:/srv/nfsexport"
+MOUNT_NFS = ("findmnt", "-J", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/mnt/nfs")
+FSTAB_NFS = (
+    "findmnt", "-J", "--fstab", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/mnt/nfs",
+)  # fmt: skip
+NFS_ROW = (
+    f'{{"filesystems": [{{"target": "/mnt/nfs", "source": "{NFS_SOURCE}", '
+    '"fstype": "nfs4", "options": "rw,relatime"}]}'
+)
+AUTO_MASTER = ("cat", "--", "/etc/auto.master")
+AUTO_FIND = ("find", "/etc/auto.master.d", "-maxdepth", "1", "-name", "*.autofs")
+AUTO_REMOTE = "/etc/auto.master.d/remote.autofs"
+AUTO_CAT = ("cat", "--", AUTO_REMOTE)
+AUTO_MAP = ("cat", "--", "/etc/auto.remote")
+SHOW_AUTOFS = (
+    "systemctl", "show", "--property=LoadState,ActiveState,UnitFileState", "--", "autofs.service",
+)  # fmt: skip
 SESTATUS = ("sestatus",)
 SE_STAT = ("stat", "-c", "%C", "--", "/srv/web")
 SE_RULE = ("matchpathcon", "-n", "--", "/srv/web")
@@ -187,6 +227,7 @@ def make_runner(
     chrony_host: str = "classroom.example.com",
     timer_calendar: str = "*-*-* 00:00:00",
     boot_arg: str = "systemd.show_status=1",
+    lab_ok: bool = True,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -231,6 +272,8 @@ def make_runner(
     inode = "64768 1034 regular file\n" if ess_ok else "64768 1035 regular file\n"
 
     blkid = ("blkid", "-o", "value", "-s", "UUID", "--", mount_device)
+    # lab_ok=False: sdb3 inexistente, sin montajes VFAT/NFS y sin configuracion autofs
+    lab_rc = 0 if lab_ok else 1
     return FakeCommandRunner(
         {
             GROUP: make_result(GROUP, returncode=group_rc, stdout=group_out),
@@ -250,6 +293,24 @@ def make_runner(
             MOUNT: make_result(MOUNT, returncode=fs_rc, stdout=fs_out(mount_out, fs_rc)),
             FSTAB: make_result(FSTAB, returncode=fs_rc, stdout=fs_out(FSTAB_OUT, fs_rc)),
             LSBLK_SDB2: make_result(LSBLK_SDB2, returncode=blockdev_rc, stdout=lsblk_out),
+            LSBLK_SDB3: make_result(
+                LSBLK_SDB3, returncode=0 if lab_ok else 32,
+                stdout=LSBLK_SDB3_OUT if lab_ok else "",
+            ),
+            MOUNT_VFAT: make_result(MOUNT_VFAT, returncode=lab_rc, stdout=MOUNT_VFAT_OUT if lab_ok else ""),
+            FSTAB_VFAT: make_result(FSTAB_VFAT, returncode=lab_rc, stdout=FSTAB_VFAT_OUT if lab_ok else ""),
+            BLKID_SDB3: make_result(BLKID_SDB3, stdout=f"{VFAT_UUID}\n"),
+            MOUNT_NFS: make_result(MOUNT_NFS, returncode=lab_rc, stdout=NFS_ROW if lab_ok else ""),
+            FSTAB_NFS: make_result(FSTAB_NFS, returncode=lab_rc, stdout=NFS_ROW if lab_ok else ""),
+            AUTO_MASTER: make_result(AUTO_MASTER, stdout="/misc\t/etc/auto.misc\n"),
+            AUTO_FIND: make_result(AUTO_FIND, stdout=f"{AUTO_REMOTE}\n"),
+            AUTO_CAT: make_result(
+                AUTO_CAT, stdout="/remote /etc/auto.remote --timeout=60\n" if lab_ok else ""
+            ),
+            AUTO_MAP: make_result(
+                AUTO_MAP, stdout=f"data -fstype=nfs4,rw {NFS_SOURCE}\n" if lab_ok else ""
+            ),
+            SHOW_AUTOFS: make_result(SHOW_AUTOFS, returncode=svc_rc, stdout=show_out),
             SWAPON: make_result(SWAPON, stdout=SWAPON_OUT),
             FSTAB_SWAP: make_result(FSTAB_SWAP, stdout=FSTAB_SWAP_OUT),
             blkid: make_result(blkid, stdout=f"{UUID}\n"),
@@ -383,18 +444,18 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "400/400" in out and "PASS" in out
+    assert "430/430" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
         group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
         net_method="auto", running_hostname="localhost", root_rc=1, script_rc=1,
-        procs_ok=False, ess_ok=False, copy_rc=1,
+        procs_ok=False, ess_ok=False, copy_rc=1, lab_ok=False,
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "90/400" in out and "FAIL" in out
+    assert "90/430" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -412,6 +473,16 @@ def test_check_filesystem_tasks_ok_and_ko() -> None:
     assert code == 1 and "[KO] fs-01" in out and "not mounted" in out
     code, out, _ = run_cli(["check", "fs-02"], make_runner(fs_rc=127))
     assert code == 1 and "[KO] fs-02" in out and "install package acl" in out
+
+
+def test_check_vfat_nfs_autofs_tasks_ok_and_ko() -> None:
+    for task_id in ("fs-03", "fs-04", "fs-05"):
+        code, out, _ = run_cli(["check", task_id], make_runner())
+        assert code == 0 and f"[OK] {task_id}" in out
+        code, out, _ = run_cli(["check", task_id], make_runner(lab_ok=False))
+        assert code == 1 and f"[KO] {task_id}" in out
+    code, out, _ = run_cli(["check", "fs-05"], make_runner(svc_rc=1))
+    assert code == 1 and "autofs.service" in out
 
 
 def test_check_partition_and_swap_tasks_ok_and_ko() -> None:
