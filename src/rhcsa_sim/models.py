@@ -10,6 +10,7 @@ class ObjectiveBlock(str, Enum):
     de EX200 (RHEL 10) y ajustar si Red Hat los cambio."""
 
     ESSENTIAL_TOOLS = "essential-tools"
+    MANAGE_SOFTWARE = "manage-software"
     SHELL_SCRIPTS = "shell-scripts"
     RUNNING_SYSTEMS = "running-systems"
     LOCAL_STORAGE = "local-storage"
@@ -18,7 +19,6 @@ class ObjectiveBlock(str, Enum):
     NETWORKING = "networking"
     USERS_GROUPS = "users-groups"
     SECURITY = "security"
-    CONTAINERS = "containers"
 
 
 @dataclass(frozen=True, slots=True)

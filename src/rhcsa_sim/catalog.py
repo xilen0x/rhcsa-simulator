@@ -3,15 +3,6 @@ from __future__ import annotations
 from rhcsa_sim.checks._units import MIB
 from rhcsa_sim.checks.acl import PathHasAclEntry
 from rhcsa_sim.checks.blockdev import PartitionExists, SwapActive, SwapInFstabByUuid
-from rhcsa_sim.checks.containers import (
-    ContainerHasBindMount,
-    ContainerImageExists,
-    ContainerPublishesPort,
-    ContainerRunning,
-    LingerEnabled,
-    QuadletUnitDefined,
-    UserServiceActive,
-)
 from rhcsa_sim.checks.essentials import (
     ArchiveContains,
     GrepOutputSaved,
@@ -71,11 +62,6 @@ from rhcsa_sim.runner import CommandRunner
 
 # Hostname compartido por net-02 y scr-01.
 LAB_HOSTNAME = "servera.lab.example.com"
-
-# Contenedores rootless de con-01..con-03: usuario e imagen (servidor httpd que escucha en
-# el 8080 interno) compartidos por las tres tareas.
-CONTAINER_USER = "alice"
-CONTAINER_IMAGE = "registry.access.redhat.com/ubi10/httpd-24"
 
 
 def build_catalog(runner: CommandRunner) -> TaskRegistry:
@@ -353,7 +339,7 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
             ),
             Task(
                 id="dnf-01",
-                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                block=ObjectiveBlock.MANAGE_SOFTWARE,
                 description=(
                     "Asegura que el repositorio defectuoso exam-internal no este habilitado "
                     "(deshabilitalo o eliminalo)."
@@ -363,7 +349,7 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
             ),
             Task(
                 id="pkg-01",
-                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                block=ObjectiveBlock.MANAGE_SOFTWARE,
                 description=(
                     "Instala el paquete at y deja el servicio atd habilitado y en ejecucion."
                 ),
@@ -426,53 +412,6 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                     ArchiveContains(
                         runner, "/root/backups/etc.tar.gz", "gzip", ("etc/hosts", "etc/fstab")
                     ),
-                ),
-            ),
-            Task(
-                id="con-01",
-                block=ObjectiveBlock.CONTAINERS,
-                description=(
-                    f"Como usuario {CONTAINER_USER} (podman rootless), descarga la imagen "
-                    f"{CONTAINER_IMAGE}."
-                ),
-                points=10,
-                checks=(ContainerImageExists(runner, CONTAINER_USER, CONTAINER_IMAGE),),
-            ),
-            Task(
-                id="con-02",
-                block=ObjectiveBlock.CONTAINERS,
-                description=(
-                    f"Como usuario {CONTAINER_USER}, ejecuta un contenedor llamado web a partir "
-                    f"de {CONTAINER_IMAGE}, publicando el puerto 8080 del host en el 8080 del "
-                    "contenedor y montando /srv/web del host en /var/www/html."
-                ),
-                points=10,
-                checks=(
-                    ContainerRunning(runner, CONTAINER_USER, "web", CONTAINER_IMAGE),
-                    ContainerPublishesPort(runner, CONTAINER_USER, "web", 8080, 8080),
-                    ContainerHasBindMount(
-                        runner, CONTAINER_USER, "web", "/srv/web", "/var/www/html"
-                    ),
-                ),
-            ),
-            Task(
-                id="con-03",
-                block=ObjectiveBlock.CONTAINERS,
-                description=(
-                    f"Haz que el contenedor web de {CONTAINER_USER} arranque con el sistema: "
-                    "sustituye el contenedor manual por el de Quadlet: define la unidad "
-                    f"web.container (imagen {CONTAINER_IMAGE}, ContainerName=web, "
-                    "WantedBy=default.target), deja activo el servicio de usuario "
-                    "web.service y habilita linger."
-                ),
-                points=10,
-                checks=(
-                    QuadletUnitDefined(
-                        runner, CONTAINER_USER, "web", CONTAINER_IMAGE, "default.target",
-                        container_name="web",
-                    ),
-                    UserServiceActive(runner, CONTAINER_USER, "web.service"),
-                    LingerEnabled(runner, CONTAINER_USER),
                 ),
             ),
             Task(

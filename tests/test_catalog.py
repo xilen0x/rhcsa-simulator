@@ -10,7 +10,6 @@ def test_catalog_has_expected_well_formed_tasks() -> None:
     ids += ["svc-01", "svc-02", "fw-01", "fw-02", "net-01", "net-02", "se-01", "se-02", "se-03", "se-04", "sec-01", "sec-02"]
     ids += ["dnf-01", "pkg-01", "cron-01", "tuned-01"]
     ids += ["scr-01", "scr-02"]
-    ids += ["con-01", "con-02", "con-03"]
     ids += ["prc-01", "log-01", "run-01"]
     ids += ["ess-01", "ess-02", "ess-03"]
     assert [t.id for t in tasks] == ids
@@ -27,3 +26,23 @@ def test_running_systems_and_scripts_blocks() -> None:
     scripts = {i for i, t in tasks.items() if t.block is ObjectiveBlock.SHELL_SCRIPTS}
     assert scripts == {"scr-01", "scr-02"}
     assert len(tasks["scr-02"].checks) == 4
+
+
+def test_manage_software_block_and_no_containers() -> None:
+    from rhcsa_sim.models import ObjectiveBlock
+
+    tasks = {t.id: t for t in build_catalog(FakeCommandRunner({})).all()}
+    software = {i for i, t in tasks.items() if t.block is ObjectiveBlock.MANAGE_SOFTWARE}
+    assert software == {"dnf-01", "pkg-01"}
+    assert not hasattr(ObjectiveBlock, "CONTAINERS")
+    assert [b.name for b in ObjectiveBlock] == [
+        "ESSENTIAL_TOOLS", "MANAGE_SOFTWARE", "SHELL_SCRIPTS", "RUNNING_SYSTEMS",
+        "LOCAL_STORAGE", "FILE_SYSTEMS", "DEPLOY_MAINTAIN", "NETWORKING",
+        "USERS_GROUPS", "SECURITY",
+    ]  # fmt: skip
+    assert ObjectiveBlock.MANAGE_SOFTWARE.value == "manage-software"
+
+
+def test_catalog_totals() -> None:
+    tasks = build_catalog(FakeCommandRunner({})).all()
+    assert (len(tasks), sum(t.points for t in tasks)) == (37, 370)
