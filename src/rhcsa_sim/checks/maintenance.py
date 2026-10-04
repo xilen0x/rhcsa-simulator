@@ -203,3 +203,53 @@ class TunedProfileIs:
         if actual != self.profile:
             return CheckResult(False, f"tuned profile is {actual}, expected {self.profile}")
         return CheckResult(True, f"tuned profile is {actual}")
+
+
+_AT_HINT = "(atq shows only your own jobs without sudo)"
+_AT_QUEUE_RE = re.compile(r"[A-Za-z]")
+
+
+def _parse_atq(stdout: str) -> list[tuple[str, str]] | None:
+    """Devuelve (cola, usuario) por trabajo; None si alguna linea no se entiende."""
+    jobs: list[tuple[str, str]] = []
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        job_id, sep, rest = line.partition("\t")
+        fields = rest.split()
+        if not sep or not job_id.strip().isdigit() or len(fields) < 2:
+            return None
+        jobs.append((fields[-2], fields[-1]))
+    return jobs
+
+
+@dataclass(frozen=True, slots=True)
+class AtJobQueued:
+    """Hay al menos un trabajo de at en cola para el usuario (opcionalmente en una cola)."""
+
+    runner: CommandRunner
+    user: str
+    queue: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_account_name(self.user)
+        if self.queue is not None and not _AT_QUEUE_RE.fullmatch(self.queue):
+            raise ValueError(f"at queue must be a single letter: {self.queue!r}")
+
+    def describe(self) -> str:
+        suffix = f" in queue {self.queue}" if self.queue else ""
+        return f"at job queued for {self.user}{suffix}"
+
+    def run(self) -> CheckResult:
+        result = self.runner.run(["atq"])
+        if result.returncode == 127:
+            return CheckResult(False, "at is not installed")
+        if not result.ok:
+            return CheckResult(False, f"cannot query at queue (exit {result.returncode})")
+        jobs = _parse_atq(result.stdout)
+        if jobs is None:
+            return CheckResult(False, "unexpected atq output")
+        for queue, user in jobs:
+            if user == self.user and (self.queue is None or queue == self.queue):
+                return CheckResult(True, f"at job queued for '{self.user}'")
+        return CheckResult(False, f"no at job queued for {self.user} {_AT_HINT}")

@@ -8,6 +8,7 @@ from rhcsa_sim.checks._validation import (
     validate_tuned_profile,
 )
 from rhcsa_sim.checks.maintenance import (
+    AtJobQueued,
     CronEntryExists,
     PackageInstalled,
     RepoNotEnabled,
@@ -251,3 +252,52 @@ def test_tuned_duplicate_profile_lines_are_unexpected() -> None:
     out = "Current active profile: virtual-guest\nCurrent active profile: balanced\n"
     result = TunedProfileIs(fake(TUNED, out), "virtual-guest").run()
     assert not result.passed and "unexpected tuned-adm output" in result.detail
+
+
+ATQ = ("atq",)
+# salida real de `atq` (at 3.2.5): id, TAB, fecha, cola y usuario
+ATQ_OUT = "1\tSun Oct  4 19:06:00 2026 a xilenox\n3\tMon Oct  5 09:00:00 2026 b alice\n"
+
+
+def at_job(stdout: str, user: str = "alice", queue: str | None = None, returncode: int = 0) -> AtJobQueued:
+    return AtJobQueued(fake(ATQ, stdout, returncode), user, queue)
+
+
+def test_at_job_ok_and_describe() -> None:
+    assert at_job(ATQ_OUT).run().passed
+    assert at_job(ATQ_OUT, "xilenox", "a").run().passed
+    assert at_job(ATQ_OUT, "alice", "b").run().passed
+    assert at_job(ATQ_OUT).describe() == "at job queued for alice"
+    assert at_job(ATQ_OUT, queue="b").describe() == "at job queued for alice in queue b"
+
+
+def test_at_job_ko_no_match() -> None:
+    for out in ("", ATQ_OUT.splitlines()[0] + "\n"):
+        result = at_job(out).run()
+        assert not result.passed
+        assert "no at job queued for alice" in result.detail and "atq shows only" in result.detail
+    result = at_job(ATQ_OUT, "alice", "a").run()
+    assert not result.passed and "no at job queued for alice" in result.detail
+
+
+def test_at_job_not_installed_and_failure() -> None:
+    result = at_job("", returncode=127).run()
+    assert not result.passed and "at is not installed" in result.detail
+    result = at_job("", returncode=1).run()
+    assert not result.passed and "cannot query" in result.detail
+
+
+def test_at_job_unparseable_line() -> None:
+    for out in ("garbage\n", "x\tSun Oct  4 19:06:00 2026 a alice\n", "1\talice\n"):
+        result = at_job(out).run()
+        assert not result.passed and "unexpected atq output" in result.detail
+
+
+def test_at_job_validation() -> None:
+    runner = FakeCommandRunner({})
+    for user in ("Bad User", "", "a;b"):
+        with pytest.raises(ValueError):
+            AtJobQueued(runner, user)
+    for queue in ("", "ab", "1", "A!"):
+        with pytest.raises(ValueError):
+            AtJobQueued(runner, "alice", queue)
