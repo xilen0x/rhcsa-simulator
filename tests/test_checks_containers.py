@@ -19,6 +19,7 @@ from rhcsa_sim.testing import FakeCommandRunner, make_result
 IMAGE = "registry.access.redhat.com/ubi10/ubi-minimal"
 ID_ALICE = ("id", "-u", "--", "alice")
 PREFIX = ("runuser", "-u", "alice", "--", "env", "XDG_RUNTIME_DIR=/run/user/1234", "podman")
+NO_XDG_PREFIX = ("runuser", "-u", "alice", "--", "env", "-u", "XDG_RUNTIME_DIR", "podman")
 RUNDIR = ("stat", "-c", "%F", "--", "/run/user/1234")
 LINGER = ("stat", "-c", "%F", "--", "/var/lib/systemd/linger/alice")
 GETENT = ("getent", "passwd", "alice")
@@ -180,15 +181,15 @@ def test_bad_uid_output_fails() -> None:
     assert not ContainerImageExists(runner, "alice", IMAGE).run().passed
 
 
-def test_missing_runtime_dir_hints_linger() -> None:
+def test_missing_runtime_dir_falls_back_to_unset_xdg() -> None:
+    # Sin linger ni sesion no existe /run/user/<uid>, pero la imagen sigue en el
+    # almacenamiento del usuario: podman debe consultarse sin XDG_RUNTIME_DIR.
     runner = fake(
         (ID_ALICE, {"stdout": "1234\n"}),
         (RUNDIR, {"returncode": 1, "stderr": "stat: cannot statx: No such file"}),
+        (NO_XDG_PREFIX + ("image", "exists", "--", IMAGE), {}),
     )
-    result = ContainerImageExists(runner, "alice", IMAGE).run()
-    assert not result.passed
-    assert "no runtime dir /run/user/1234 for alice" in result.detail
-    assert "loginctl enable-linger alice" in result.detail
+    assert ContainerImageExists(runner, "alice", IMAGE).run().passed
 
 
 # --- ContainerRunning ---

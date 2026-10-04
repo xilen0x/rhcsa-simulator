@@ -78,16 +78,14 @@ def _run_podman(
     uid = uid_result.stdout.strip()
     if not uid_result.ok or not uid.isdigit():
         return CheckResult(False, f"cannot resolve uid of user '{user}'")
-    # Sin /run/user/<uid> (sin linger ni sesion) podman falla con un error confuso.
-    if not runner.run(["stat", "-c", "%F", "--", f"/run/user/{uid}"]).ok:
-        return CheckResult(
-            False,
-            f"no runtime dir /run/user/{uid} for {user}: "
-            f"enable linger (loginctl enable-linger {user}) or log in",
-        )
-    return runner.run(
-        ["runuser", "-u", user, "--", "env", f"XDG_RUNTIME_DIR=/run/user/{uid}", "podman", *args]
-    )
+    # Sin /run/user/<uid> (sin linger ni sesion) un XDG_RUNTIME_DIR inexistente hace
+    # fallar a podman; sin la variable usa su directorio alternativo y sigue viendo
+    # las imagenes del usuario. Linger se evalua aparte (LingerEnabled).
+    if runner.run(["stat", "-c", "%F", "--", f"/run/user/{uid}"]).ok:
+        env = ["env", f"XDG_RUNTIME_DIR=/run/user/{uid}"]
+    else:
+        env = ["env", "-u", "XDG_RUNTIME_DIR"]
+    return runner.run(["runuser", "-u", user, "--", *env, "podman", *args])
 
 
 def _load_json(text: str) -> object:
