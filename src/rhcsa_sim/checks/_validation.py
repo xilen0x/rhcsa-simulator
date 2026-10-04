@@ -201,3 +201,10 @@ def validate_tuned_profile(name: str) -> str:
     if not _TUNED_PROFILE_RE.fullmatch(name):
         raise ValueError(f"invalid tuned profile: {name!r}")
     return name
+
+
+def validate_kernel_arg(arg: str) -> str:
+    """Argumento de kernel: sin espacios/NUL y sin '-' inicial (se pasa a grubby)."""
+    if not arg or arg.startswith("-") or any(c.isspace() or c == "\0" for c in arg):
+        raise ValueError(f"invalid kernel argument: {arg!r}")
+    return arg
