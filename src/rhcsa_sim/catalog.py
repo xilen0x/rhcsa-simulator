@@ -140,7 +140,7 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 id="users-06",
                 block=ObjectiveBlock.USERS_GROUPS,
                 description=(
-                    "Crea el directorio colaborativo /srv/devs con grupo 'devs' "
+                    "Crea el directorio colaborativo /srv/devs con propietario root, grupo 'devs' "
                     "y modo 2770 (setgid)."
                 ),
                 points=10,
