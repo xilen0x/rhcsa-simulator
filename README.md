@@ -61,9 +61,12 @@ Run `rhcsa-sim` with no arguments (use `sudo` for the root-only checks) to open 
 | `l` | list every task with its status and the running score |
 | `s` | show the current task again |
 | `h` or `?` | help |
+| `reset` | start a new 3-hour exam (restarts the timer) |
 | `q` | quit |
 
 The menu remembers what you graded during the session. `q`, `Ctrl+D` and `Ctrl+C` all exit with code `0`.
+
+On a terminal, a 3-hour countdown is shown in the top-right corner. It keeps counting across reboots and reopening the menu: the exam start is stored in `/var/tmp/rhcsa-sim-exam.json`. Type `reset` (the full word) to start a new exam. Always run it with `sudo` (or always without) so the same user owns that file; otherwise the timer cannot be saved and a warning is shown.
 
 ## Commands
 

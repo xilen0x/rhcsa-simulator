@@ -3,8 +3,10 @@ from __future__ import annotations
 import shutil
 import textwrap
 import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TextIO
 
 from rhcsa_sim.evaluator import evaluate_tasks
@@ -15,7 +17,14 @@ from rhcsa_sim.reporter import (
     calculate_score,
     sanitize_text,
 )
-from rhcsa_sim.timer import CornerTicker, ExamClock, format_clock, render_timer
+from rhcsa_sim.timer import (
+    ClockHolder,
+    CornerTicker,
+    ExamClock,
+    format_clock,
+    render_timer,
+    resume_or_start,
+)
 from rhcsa_sim.ui import Ui
 
 BOX_WIDTH = 76
@@ -36,6 +45,7 @@ _HELP = (
     ("s", "show the current task again"),
     ("h / ?", "this help"),
     ("timer", "3-hour exam countdown, top-right corner"),
+    ("reset", "start a new 3-hour exam (restart the timer)"),
     ("q", "quit"),
 )
 
@@ -193,8 +203,18 @@ def render_help(ui: Ui) -> str:
     return "\n".join(f"  {ui.bold(f'{key:<16}')}{text}" for key, text in _HELP)
 
 
+def _reset_exam(state: SessionState, ui: Ui, holder: ClockHolder | None) -> Reply:
+    if holder is None or holder.clock is None:
+        return Reply(ui.yellow("The exam timer is only shown on a terminal."))
+    warning = holder.restart()
+    lines = [render_task(state, ui), ui.yellow("New exam started: 3 hours on the clock.")]
+    if warning is not None:
+        lines.append(ui.yellow(sanitize_text(warning)))
+    return Reply("\n".join(lines), clear=True)
+
+
 def dispatch(
-    state: SessionState, ui: Ui, line: str, *, clock: ExamClock | None = None
+    state: SessionState, ui: Ui, line: str, *, holder: ClockHolder | None = None
 ) -> Reply:
     """Interpreta una linea del usuario, actualiza el estado y devuelve el texto."""
     command = line.strip().lower()
@@ -224,8 +244,11 @@ def dispatch(
         parts = [render_compact_result(r, ui) for r in results]
         parts.append(render_score(results, ui))
         return Reply("\n".join(parts))
+    if command == "reset":
+        return _reset_exam(state, ui, holder)
     if command == "q":
         earned, total = state.graded_score()
+        clock = holder.clock if holder is not None else None
         used = f" Time used {format_clock(clock.elapsed())}." if clock else ""
         return Reply(
             f"Bye! Session score: {earned}/{total} "
@@ -249,24 +272,36 @@ def run_session(
     *,
     clear_screen: bool = False,
     clock: ExamClock | None = None,
+    exam_state: Path | None = None,
+    now: Callable[[], float] = time.time,
 ) -> int:
     """Bucle de lectura: EOF y Ctrl+C terminan limpiamente con codigo 0.
 
     Con clear_screen, cada vista de tarea reemplaza la pantalla anterior; el menu
     de comandos se muestra siempre debajo de cada respuesta. Con clear_screen y un
     reloj, la cuenta regresiva se dibuja en la esquina superior derecha; toda
-    escritura comparte un lock con el hilo del reloj para no mezclar secuencias."""
+    escritura comparte un lock con el hilo del reloj para no mezclar secuencias.
+    Con exam_state (solo en terminal) el examen se reanuda o se guarda ahi."""
     state = SessionState(registry.all())
     if not state.tasks:
         out.write("No tasks available.\n")
         return 0
     lock = threading.Lock()
+    warning: str | None = None
+    if clear_screen and clock is None and exam_state is not None:
+        clock, warning = resume_or_start(exam_state, now)
+    holder = ClockHolder(clock, exam_state if clear_screen else None, now)
     ticker: CornerTicker | None = None
     if clear_screen and clock is not None:
+
+        def render() -> str:
+            current = holder.clock
+            return render_timer(current, ui) if current is not None else ""
+
         ticker = CornerTicker(
             out,
             lock,
-            lambda: render_timer(clock, ui),
+            render,
             lambda: shutil.get_terminal_size().columns,
         )
 
@@ -286,13 +321,16 @@ def run_session(
     if clear_screen:
         clear()
     emit(render_banner(state, ui) + "\n")
-    emit(render_task(state, ui) + "\n" + bar)
+    emit(render_task(state, ui) + "\n")
+    if warning is not None:
+        emit(ui.yellow(sanitize_text(warning)) + "\n")
+    emit(bar)
     if ticker is not None:
         ticker.start()
     try:
         while True:
             emit(PROMPT, flush=True)
-            reply = dispatch(state, ui, read(), clock=clock)
+            reply = dispatch(state, ui, read(), holder=holder)
             if reply.clear and clear_screen:
                 clear()
             emit(reply.text + "\n")

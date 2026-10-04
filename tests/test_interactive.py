@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import io
+import json
+from collections.abc import Callable
+from pathlib import Path
 
 from rhcsa_sim.interactive import (
     CLEAR_SCREEN,
@@ -12,7 +15,7 @@ from rhcsa_sim.interactive import (
 )
 from rhcsa_sim.models import CheckResult, ObjectiveBlock, Task
 from rhcsa_sim.registry import TaskRegistry
-from rhcsa_sim.timer import ExamClock
+from rhcsa_sim.timer import EXAM_SECONDS, ClockHolder, ExamClock, render_timer
 from rhcsa_sim.ui import Ui
 
 
@@ -323,3 +326,121 @@ def test_no_timer_without_clock_or_clear_screen() -> None:
 
 def test_help_mentions_timer() -> None:
     assert "timer" in render_help(PLAIN)
+
+
+# --- reset y persistencia del reloj ---
+
+
+class Now:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def __call__(self) -> float:
+        return self.value
+
+
+def persistent_session(
+    lines: list[str], path: Path, now: Callable[[], float], clear_screen: bool = True
+) -> str:
+    tasks, _ = make_tasks()
+    feed = iter(lines)
+
+    def read() -> str:
+        try:
+            return next(feed)
+        except StopIteration:
+            raise EOFError from None
+
+    out = io.StringIO()
+    run_session(
+        TaskRegistry(tasks),
+        PLAIN,
+        read,
+        out,
+        clear_screen=clear_screen,
+        exam_state=path,
+        now=now,
+    )
+    return out.getvalue()
+
+
+def test_help_lists_reset() -> None:
+    assert "reset" in render_help(PLAIN)
+
+
+def test_reset_without_clock_shows_notice() -> None:
+    tasks, _ = make_tasks()
+    reply = dispatch(SessionState(tasks), PLAIN, "reset")
+    assert "terminal" in reply.text and not reply.clear and not reply.quit
+
+
+def test_single_letter_r_does_not_reset() -> None:
+    tasks, _ = make_tasks()
+    assert "Unknown command" in dispatch(SessionState(tasks), PLAIN, "r").text
+
+
+def test_reset_replaces_clock_saves_and_redraws(tmp_path: Path) -> None:
+    path = tmp_path / "exam.json"
+    now = Now(1000.0)
+    holder = ClockHolder(ExamClock(started=0.0, now=now), path, now)
+    tasks, _ = make_tasks()
+    reply = dispatch(SessionState(tasks), PLAIN, "reset", holder=holder)
+    assert reply.clear and "New exam started: 3 hours on the clock." in reply.text
+    assert "Task 1/" in reply.text
+    assert holder.clock is not None
+    assert render_timer(holder.clock, PLAIN) == "Time left 03:00:00"
+    assert json.loads(path.read_text())["started"] == 1000.0
+
+
+def test_reset_save_failure_warns_without_crashing(tmp_path: Path) -> None:
+    path = tmp_path / "exam.json"
+    path.mkdir()
+    now = Now(1000.0)
+    holder = ClockHolder(ExamClock(started=0.0, now=now), path, now)
+    tasks, _ = make_tasks()
+    reply = dispatch(SessionState(tasks), PLAIN, "reset", holder=holder)
+    assert "Could not save the exam timer" in reply.text
+    assert holder.clock is not None and holder.clock.started == 1000.0
+
+
+def test_session_creates_and_resumes_state(tmp_path: Path) -> None:
+    path = tmp_path / "exam.json"
+    now = Now(1000.0)
+    first = persistent_session(["q"], path, now)
+    assert "Time left 03:00:00" in first
+    now.value = 1000.0 + 3600
+    second = persistent_session(["q"], path, now)
+    assert "Time left 02:00:00" in second and "Time used 01:00:00." in second
+
+
+def test_session_expired_state_shows_time_up(tmp_path: Path) -> None:
+    path = tmp_path / "exam.json"
+    now = Now(1000.0)
+    persistent_session(["q"], path, now)
+    now.value = 1000.0 + EXAM_SECONDS + 1
+    assert "TIME UP" in persistent_session(["q"], path, now)
+
+
+def test_session_reset_then_timer_reads_full(tmp_path: Path) -> None:
+    path = tmp_path / "exam.json"
+    now = Now(1000.0)
+    persistent_session(["q"], path, now)
+    now.value = 1000.0 + 3600
+    text = persistent_session(["reset", "q"], path, now)
+    assert "New exam started" in text
+    assert text.count("Time left 03:00:00") >= 1
+    assert "Time used 00:00:00." in text
+    assert json.loads(path.read_text())["started"] == 1000.0 + 3600
+
+
+def test_session_warns_when_state_cannot_be_saved(tmp_path: Path) -> None:
+    path = tmp_path / "nodir" / "exam.json"
+    text = persistent_session(["q"], path, Now(1000.0))
+    assert "Could not save the exam timer" in text and "Bye!" in text
+
+
+def test_non_tty_session_never_touches_state(tmp_path: Path) -> None:
+    path = tmp_path / "exam.json"
+    text = persistent_session(["reset", "q"], path, Now(1000.0), clear_screen=False)
+    assert not path.exists()
+    assert "\x1b" not in text and "Time left" not in text
