@@ -7,12 +7,14 @@ from rhcsa_sim.checks._validation import (
     validate_absolute_path,
     validate_block_device,
     validate_fstype,
+    validate_nfs_source,
     validate_uuid,
 )
 from rhcsa_sim.models import CheckResult
 from rhcsa_sim.runner import CommandResult, CommandRunner
 
 _UUID_PREFIX = "UUID="
+_NFS_TYPES = frozenset({"nfs", "nfs4"})
 
 
 def _query_failed(what: str, result: CommandResult) -> CheckResult:
@@ -180,3 +182,58 @@ class FstabUuidMatchesMount:
                 False, f"fstab UUID is {expected}, but the mounted device has {actual}"
             )
         return CheckResult(True, f"fstab UUID matches the mounted device ({actual})")
+
+
+def _nfs_row_problem(row: Row, source: str) -> CheckResult | None:
+    """KO si la fila no es un recurso NFS (nfs/nfs4) con el origen esperado."""
+    if row["fstype"] not in _NFS_TYPES:
+        return CheckResult(False, f"filesystem type is {row['fstype']}, expected nfs or nfs4")
+    if row["source"] != source:
+        return CheckResult(False, f"NFS source is {row['source']}, expected {source}")
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class NfsMountedAt:
+    runner: CommandRunner
+    target: str
+    source: str
+
+    def __post_init__(self) -> None:
+        validate_absolute_path(self.target)
+        validate_nfs_source(self.source)
+
+    def describe(self) -> str:
+        return f"{self.target} is mounted from NFS share {self.source}"
+
+    def run(self) -> CheckResult:
+        row = _query_mount(self.runner, self.target)
+        if isinstance(row, CheckResult):
+            return row
+        problem = _nfs_row_problem(row, self.source)
+        if problem is not None:
+            return problem
+        return CheckResult(True, f"'{self.target}' is mounted from {self.source} ({row['fstype']})")
+
+
+@dataclass(frozen=True, slots=True)
+class FstabNfsEntry:
+    runner: CommandRunner
+    target: str
+    source: str
+
+    def __post_init__(self) -> None:
+        validate_absolute_path(self.target)
+        validate_nfs_source(self.source)
+
+    def describe(self) -> str:
+        return f"{self.target} has a persistent NFS mount of {self.source} in /etc/fstab"
+
+    def run(self) -> CheckResult:
+        row = _query_fstab(self.runner, self.target)
+        if isinstance(row, CheckResult):
+            return row
+        problem = _nfs_row_problem(row, self.source)
+        if problem is not None:
+            return problem
+        return CheckResult(True, f"fstab entry for '{self.target}' mounts {self.source}")

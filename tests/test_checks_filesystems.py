@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
+from rhcsa_sim.checks.filesystems import (
+    FstabMountByUuid,
+    FstabNfsEntry,
+    FstabUuidMatchesMount,
+    MountedAt,
+    NfsMountedAt,
+)
 from rhcsa_sim.models import Check
 from rhcsa_sim.runner import CommandResult
 from rhcsa_sim.testing import FakeCommandRunner, make_result
@@ -288,3 +294,96 @@ def test_matches_malformed_findmnt_output_is_ko(stdout: str) -> None:
 def test_matches_invalid_target() -> None:
     with pytest.raises(ValueError):
         FstabUuidMatchesMount(fake(), "data")
+
+
+NFS_SOURCE = "localhost:/srv/nfsexport"
+NFS_MOUNT_CMD = (
+    "findmnt", "-J", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/mnt/nfs",
+)  # fmt: skip
+NFS_FSTAB_CMD = (
+    "findmnt", "-J", "--fstab", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", "--mountpoint=/mnt/nfs",
+)  # fmt: skip
+
+
+def nfs_fake(
+    mount: tuple[str, int] | None = None, fstab: tuple[str, int] | None = None
+) -> FakeCommandRunner:
+    responses: dict[tuple[str, ...], CommandResult] = {}
+    for cmd, item in ((NFS_MOUNT_CMD, mount), (NFS_FSTAB_CMD, fstab)):
+        if item is not None:
+            responses[cmd] = make_result(cmd, returncode=item[1], stdout=item[0])
+    return FakeCommandRunner(responses)
+
+
+def nfs_table(source: str = NFS_SOURCE, fstype: str = "nfs4") -> str:
+    return table(source, fstype, "/mnt/nfs")
+
+
+def test_nfs_checks_satisfy_protocol() -> None:
+    checks: list[Check] = [
+        NfsMountedAt(nfs_fake(), "/mnt/nfs", NFS_SOURCE),
+        FstabNfsEntry(nfs_fake(), "/mnt/nfs", NFS_SOURCE),
+    ]
+    assert all(c.describe() and NFS_SOURCE in c.describe() for c in checks)
+
+
+@pytest.mark.parametrize("fstype", ["nfs", "nfs4"])
+def test_nfs_mounted_passes(fstype: str) -> None:
+    runner = nfs_fake(mount=(nfs_table(fstype=fstype), 0))
+    assert NfsMountedAt(runner, "/mnt/nfs", NFS_SOURCE).run().passed
+
+
+def test_nfs_mounted_fails_when_not_mounted() -> None:
+    result = NfsMountedAt(nfs_fake(mount=NOT_FOUND), "/mnt/nfs", NFS_SOURCE).run()
+    assert not result.passed and "not mounted" in result.detail
+
+
+def test_nfs_mounted_fails_on_wrong_fstype() -> None:
+    runner = nfs_fake(mount=(nfs_table("/dev/sdb3", "xfs"), 0))
+    result = NfsMountedAt(runner, "/mnt/nfs", NFS_SOURCE).run()
+    assert not result.passed and "xfs" in result.detail
+
+
+def test_nfs_mounted_fails_on_wrong_source() -> None:
+    runner = nfs_fake(mount=(nfs_table("other:/srv/x"), 0))
+    result = NfsMountedAt(runner, "/mnt/nfs", NFS_SOURCE).run()
+    assert not result.passed and "other:/srv/x" in result.detail
+
+
+@pytest.mark.parametrize("fstype", ["nfs", "nfs4"])
+def test_fstab_nfs_entry_passes(fstype: str) -> None:
+    runner = nfs_fake(fstab=(nfs_table(fstype=fstype), 0))
+    assert FstabNfsEntry(runner, "/mnt/nfs", NFS_SOURCE).run().passed
+
+
+def test_fstab_nfs_entry_fails_without_entry() -> None:
+    result = FstabNfsEntry(nfs_fake(fstab=NOT_FOUND), "/mnt/nfs", NFS_SOURCE).run()
+    assert not result.passed and "no fstab entry" in result.detail
+
+
+def test_fstab_nfs_entry_fails_on_wrong_source_or_type() -> None:
+    wrong_source = nfs_fake(fstab=(nfs_table("other:/srv/x"), 0))
+    assert not FstabNfsEntry(wrong_source, "/mnt/nfs", NFS_SOURCE).run().passed
+    wrong_type = nfs_fake(fstab=(nfs_table(fstype="cifs"), 0))
+    result = FstabNfsEntry(wrong_type, "/mnt/nfs", NFS_SOURCE).run()
+    assert not result.passed and "cifs" in result.detail
+
+
+def test_nfs_checks_fail_on_query_error() -> None:
+    assert not NfsMountedAt(nfs_fake(mount=("", 2)), "/mnt/nfs", NFS_SOURCE).run().passed
+    assert not FstabNfsEntry(nfs_fake(fstab=("junk", 0)), "/mnt/nfs", NFS_SOURCE).run().passed
+
+
+@pytest.mark.parametrize("source", ["", "localhost", "localhost:srv", "host :/x", "/srv:", ":/x\n"])
+def test_nfs_checks_reject_bad_source(source: str) -> None:
+    with pytest.raises(ValueError):
+        NfsMountedAt(nfs_fake(), "/mnt/nfs", source)
+    with pytest.raises(ValueError):
+        FstabNfsEntry(nfs_fake(), "/mnt/nfs", source)
+
+
+def test_nfs_checks_reject_relative_target() -> None:
+    with pytest.raises(ValueError):
+        NfsMountedAt(nfs_fake(), "mnt/nfs", NFS_SOURCE)
+    with pytest.raises(ValueError):
+        FstabNfsEntry(nfs_fake(), "mnt/nfs", NFS_SOURCE)

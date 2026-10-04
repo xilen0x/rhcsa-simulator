@@ -70,6 +70,15 @@ def validate_fstype(name: str) -> str:
     return name
 
 
+def validate_nfs_source(source: str) -> str:
+    """Origen NFS `host:/ruta`: sin espacios ni NUL y con ruta absoluta tras el ':'."""
+    # el primer ":/" separa host y ruta (admite hosts IPv6 entre corchetes)
+    index = source.find(":/")
+    if index < 1 or any(c.isspace() or c == "\0" for c in source):
+        raise ValueError(f"invalid NFS source (expected host:/path): {source!r}")
+    return source
+
+
 def validate_uuid(value: str) -> str:
     """UUID de sistema de archivos: forma larga o corta de vfat (XXXX-XXXX)."""
     if not _UUID_RE.fullmatch(value):

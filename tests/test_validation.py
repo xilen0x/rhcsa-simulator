@@ -14,6 +14,7 @@ from rhcsa_sim.checks._validation import (
     validate_ipv4_address,
     validate_ipv4_interface,
     validate_lvm_name,
+    validate_nfs_source,
     validate_port,
     validate_protocol,
     validate_selinux_boolean,
@@ -315,3 +316,14 @@ def test_valid_hostnames(name: str) -> None:
 def test_invalid_hostnames(name: str) -> None:
     with pytest.raises(ValueError):
         validate_hostname(name)
+
+
+@pytest.mark.parametrize("source", ["localhost:/srv/nfsexport", "10.0.0.1:/", "[::1]:/srv/x"])
+def test_valid_nfs_sources(source: str) -> None:
+    assert validate_nfs_source(source) == source
+
+
+@pytest.mark.parametrize("source", ["", "localhost", "host:srv", ":/x", "h :/x", "h:/x y", "h:/x\0"])
+def test_invalid_nfs_sources(source: str) -> None:
+    with pytest.raises(ValueError):
+        validate_nfs_source(source)
