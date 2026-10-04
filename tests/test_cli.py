@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -760,8 +761,11 @@ CLEAR = "\x1b[H\x1b[2J"
     ],
 )
 def test_no_args_clears_screen_only_on_a_real_terminal(
-    out: io.StringIO, env: dict[str, str], clears: bool
+    out: io.StringIO, env: dict[str, str], clears: bool, tmp_path: Path
 ) -> None:
-    code = main([], runner=make_runner(), stdout=out, env=env, stdin=io.StringIO("n\nq\n"))
+    code = main(
+        [], runner=make_runner(), stdout=out, env=env,
+        stdin=io.StringIO("n\nq\n"), exam_state=tmp_path / "exam.json",
+    )  # fmt: skip
     assert code == 0
     assert (CLEAR in out.getvalue()) is clears

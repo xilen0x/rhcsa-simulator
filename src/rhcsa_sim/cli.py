@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import TextIO
 
 from rhcsa_sim.catalog import build_catalog
@@ -18,6 +19,7 @@ from rhcsa_sim.reporter import (
     should_use_color,
 )
 from rhcsa_sim.runner import CommandRunner, SubprocessRunner
+from rhcsa_sim.timer import DEFAULT_EXAM_STATE
 from rhcsa_sim.ui import Ui, supports_unicode
 
 EXIT_OK = 0
@@ -98,6 +100,7 @@ def main(
     stderr: TextIO | None = None,
     env: Mapping[str, str] | None = None,
     stdin: TextIO | None = None,
+    exam_state: Path | None = None,
 ) -> int:
     out = sys.stdout if stdout is None else stdout
     err = sys.stderr if stderr is None else stderr
@@ -124,7 +127,14 @@ def main(
             return line
 
         clear_screen = out.isatty() and environ.get("TERM") != "dumb"
-        return run_session(registry, ui, read, out, clear_screen=clear_screen)
+        return run_session(
+            registry,
+            ui,
+            read,
+            out,
+            clear_screen=clear_screen,
+            exam_state=DEFAULT_EXAM_STATE if exam_state is None else exam_state,
+        )
     if command == "list":
         return _cmd_list(registry, out)
     if command == "show":
