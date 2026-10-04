@@ -18,7 +18,7 @@ from rhcsa_sim.checks.essentials import (
     HardLinkTo,
     SymlinkTo,
 )
-from rhcsa_sim.checks.files import PathHasMode, PathHasOwner
+from rhcsa_sim.checks.files import FilesIdentical, PathHasMode, PathHasOwner
 from rhcsa_sim.checks.firewall import FirewallPortAllowed, FirewallServiceAllowed
 from rhcsa_sim.checks.filesystems import FstabMountByUuid, FstabUuidMatchesMount, MountedAt
 from rhcsa_sim.checks.logs import JournalPersistent
@@ -386,7 +386,7 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
             ),
             Task(
                 id="tuned-01",
-                block=ObjectiveBlock.DEPLOY_MAINTAIN,
+                block=ObjectiveBlock.RUNNING_SYSTEMS,
                 description=(
                     "Aplica el perfil de tuned recomendado para esta VM (virtual-guest)."
                 ),
@@ -407,6 +407,25 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                     ScriptHasShebang(runner, "/usr/local/bin/sysinfo.sh", "/bin/bash"),
                     ScriptSyntaxValid(runner, "/usr/local/bin/sysinfo.sh"),
                     FileContainsLine(runner, "/root/sysinfo.txt", LAB_HOSTNAME),
+                ),
+            ),
+            Task(
+                id="scr-02",
+                block=ObjectiveBlock.SHELL_SCRIPTS,
+                description=(
+                    "Crea el script ejecutable /usr/local/bin/etc-backup.sh (bash) que genere "
+                    "el archivo comprimido con gzip /root/backups/etc.tar.gz con el contenido "
+                    "de /etc, y ejecutalo una vez: se evalua el archivo resultante, no la "
+                    "ejecucion del script."
+                ),
+                points=10,
+                checks=(
+                    FileIsExecutable(runner, "/usr/local/bin/etc-backup.sh"),
+                    ScriptHasShebang(runner, "/usr/local/bin/etc-backup.sh", "/bin/bash"),
+                    ScriptSyntaxValid(runner, "/usr/local/bin/etc-backup.sh"),
+                    ArchiveContains(
+                        runner, "/root/backups/etc.tar.gz", "gzip", ("etc/hosts", "etc/fstab")
+                    ),
                 ),
             ),
             Task(
@@ -475,6 +494,16 @@ def build_catalog(runner: CommandRunner) -> TaskRegistry:
                 ),
                 points=10,
                 checks=(JournalPersistent(runner),),
+            ),
+            Task(
+                id="run-01",
+                block=ObjectiveBlock.RUNNING_SYSTEMS,
+                description=(
+                    "Copia de forma segura con scp desde localhost el fichero /etc/services "
+                    "a /root/services.bak."
+                ),
+                points=10,
+                checks=(FilesIdentical(runner, "/etc/services", "/root/services.bak"),),
             ),
             Task(
                 id="ess-01",

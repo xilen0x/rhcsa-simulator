@@ -136,6 +136,14 @@ SYMLINK_STAT = ("stat", "-c", "%F", "--", "/root/hosts-link")
 SYMLINK_READ = ("readlink", "--", "/root/hosts-link")
 NOTES_STAT = ("stat", "-c", "%d %i %F", "--", "/root/notes.txt")
 NOTES_HARD_STAT = ("stat", "-c", "%d %i %F", "--", "/root/notes.hard")
+BACKUP_SCRIPT = "/usr/local/bin/etc-backup.sh"
+BACKUP_STAT = ("stat", "-c", "%a %F", "--", BACKUP_SCRIPT)
+BACKUP_HEAD = ("head", "-n", "1", "--", BACKUP_SCRIPT)
+BACKUP_SYNTAX = ("bash", "-n", "--", BACKUP_SCRIPT)
+BACKUP_ARCHIVE = "/root/backups/etc.tar.gz"
+BACKUP_MIME = ("file", "-b", "--mime-type", "--", BACKUP_ARCHIVE)
+BACKUP_LIST = ("tar", "-tf", BACKUP_ARCHIVE)
+CMP_SERVICES = ("cmp", "-s", "--", "/etc/services", "/root/services.bak")
 NOLOGIN_GREP = ("grep", "--", "nologin", "/etc/passwd")
 NOLOGIN_CAT = ("cat", "--", "/root/nologin.txt")
 CONTAINER_IMAGE = "registry.access.redhat.com/ubi10/httpd-24"
@@ -190,6 +198,7 @@ def make_runner(
     container_rc: int = 0,
     procs_ok: bool = True,
     ess_ok: bool = True,
+    copy_rc: int = 0,
 ) -> FakeCommandRunner:
     group_out = "devs:x:5000:alice\n" if group_rc == 0 else ""
     # sin root, LVM avisa por stderr y sale con codigo distinto de cero
@@ -306,6 +315,16 @@ def make_runner(
             ),
             SCRIPT_SYNTAX: make_result(SCRIPT_SYNTAX, returncode=127 if script_rc else 0),
             SYSINFO_GREP: make_result(SYSINFO_GREP, returncode=2 if script_rc else 0),
+            BACKUP_STAT: make_result(BACKUP_STAT, returncode=script_rc, stdout=script_out),
+            BACKUP_HEAD: make_result(
+                BACKUP_HEAD, returncode=script_rc, stdout="#!/bin/bash\n" if script_rc == 0 else ""
+            ),
+            BACKUP_SYNTAX: make_result(BACKUP_SYNTAX, returncode=127 if script_rc else 0),
+            BACKUP_MIME: make_result(
+                BACKUP_MIME, stdout="application/gzip\n" if ess_ok else "application/x-xz\n"
+            ),
+            BACKUP_LIST: make_result(BACKUP_LIST, stdout="etc/\netc/fstab\netc/hosts\n"),
+            CMP_SERVICES: make_result(CMP_SERVICES, returncode=copy_rc),
             ARCHIVE_MIME: make_result(
                 ARCHIVE_MIME, stdout="application/gzip\n" if ess_ok else "application/x-xz\n"
             ),
@@ -383,18 +402,18 @@ def test_check_single_ok_and_ko() -> None:
 def test_check_all_pass() -> None:
     code, out, _ = run_cli(["check", "--all"], make_runner())
     assert code == 0
-    assert "380/380" in out and "PASS" in out
+    assert "400/400" in out and "PASS" in out
 
 
 def test_check_all_with_failure() -> None:
     runner = make_runner(
         group_rc=2, lvm_rc=5, fs_rc=1, svc_rc=1, fw_rc=253, semanage_rc=1, blockdev_rc=32,
         net_method="auto", running_hostname="localhost", root_rc=1, script_rc=1,
-        container_rc=1, procs_ok=False, ess_ok=False,
+        container_rc=1, procs_ok=False, ess_ok=False, copy_rc=1,
     )
     code, out, _ = run_cli(["check", "--all"], runner)
     assert code == 1
-    assert "90/380" in out and "FAIL" in out
+    assert "90/400" in out and "FAIL" in out
 
 
 def test_check_storage_failure_shows_root_hint() -> None:
@@ -502,6 +521,24 @@ def test_check_script_task_ok_and_ko() -> None:
     assert code == 0 and "[OK] scr-01" in out
     code, out, _ = run_cli(["check", "scr-01"], make_runner(script_rc=1))
     assert code == 1 and "[KO] scr-01" in out and "cannot stat" in out
+
+
+def test_check_backup_script_task_ok_and_ko() -> None:
+    code, out, _ = run_cli(["check", "scr-02"], make_runner())
+    assert code == 0 and "[OK] scr-02" in out
+    code, out, _ = run_cli(["check", "scr-02"], make_runner(script_rc=1))
+    assert code == 1 and "[KO] scr-02" in out and "cannot stat" in out
+    code, out, _ = run_cli(["check", "scr-02"], make_runner(ess_ok=False))
+    assert code == 1 and "[KO] scr-02" in out
+
+
+def test_check_secure_copy_task_ok_and_ko() -> None:
+    code, out, _ = run_cli(["check", "run-01"], make_runner())
+    assert code == 0 and "[OK] run-01" in out
+    code, out, _ = run_cli(["check", "run-01"], make_runner(copy_rc=1))
+    assert code == 1 and "[KO] run-01" in out and "content differs" in out
+    code, out, _ = run_cli(["check", "run-01"], make_runner(copy_rc=2))
+    assert code == 1 and "sudo" in out
 
 
 def test_check_container_tasks_ok_and_ko() -> None:
